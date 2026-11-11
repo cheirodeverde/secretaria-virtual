@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/base.css"><link rel="icon" href="/icon.svg">
+<title>Admin — Secretária de Bolso</title>
+<style>
+  body { padding: 20px; }
+  .wrap { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: 1fr 380px; gap: 16px; align-items: start; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 6px; border-top: 1px solid var(--line); vertical-align: middle; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; border-top: 0; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  select.small { padding: 5px 8px; border-radius: 8px; width: auto; font-size: 13px; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; }
+  .kpi b { display: block; font-size: 24px; }
+  #chat { height: 460px; overflow-y: auto; }
+  @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } .kpis { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+<h1 style="max-width:1180px;margin:0 auto 14px">Painel do SaaS</h1>
+<div class="wrap">
+  <div>
+    <div class="kpis" id="kpis"></div>
+    <section class="card" style="overflow-x:auto">
+      <p class="label">Clientes</p>
+      <table><thead><tr><th>#</th><th>Cliente</th><th>Situação</th><th>Agenda</th><th class="num">Enviadas</th><th class="num">Recebidas</th><th class="num">Não entendidas</th><th class="num">Custo (R$)</th><th></th></tr></thead><tbody id="rows"></tbody></table>
+    </section>
+  </div>
+  <section class="card stack">
+    <p class="label" style="margin:0">Simulador de WhatsApp</p>
+    <p class="muted" style="margin:0" id="simNote">Converse como se fosse um cliente (só no modo simulação).</p>
+    <div class="grid2"><label>Telefone<input id="phone" value="5511999990001"></label><label>Nome no perfil<input id="pname" value="Ana Souza"></label></div>
+    <div class="chat" id="chat"></div>
+    <form id="send" class="row"><input id="msg" placeholder="Digite como o cliente…" autocomplete="off"><button class="primary">Enviar</button></form>
+    <div class="grid2">
+      <button onclick="runTick(true)">Rodar agendador (este número)</button>
+      <button onclick="openPanel()">Abrir painel deste cliente</button>
+    </div>
+  </section>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const toast = (m) => { const t = $('#toast'); t.textContent = m; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2600); };
+async function api(url, method = 'GET', body) {
+  const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || `Erro ${r.status}`);
+  return d;
+}
+const STATUS = { trial: 'Teste', active: 'Ativa', past_due: 'Inadimplente', canceled: 'Cancelada' };
+async function load() {
+  const d = await api('/api/admin/tenants');
+  const t = d.tenants;
+  const paying = t.filter((x) => x.status === 'active');
+  const cost = t.reduce((s, x) => s + x.estCost, 0);
+  const sent = t.reduce((s, x) => s + x.sent + x.received, 0);
+  const unk = t.reduce((s, x) => s + x.unknown, 0);
+  const rec = t.reduce((s, x) => s + x.received, 0);
+  $('#kpis').innerHTML = [
+    ['Clientes', t.length], ['Pagantes', paying.length], ['Custo WhatsApp no mês', cost.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })],
+    ['Não entendidas', rec ? `${Math.round((unk / rec) * 100)}%` : '—'],
+  ].map(([k, v]) => `<div class="kpi"><span class="muted">${k}</span><b>${v}</b></div>`).join('');
+  $('#rows').innerHTML = t.map((x) => `<tr>
+    <td>${x.id}</td><td><b>${esc(x.name || '—')}</b><br><span class="muted">+${esc(x.phone)}</span></td>
+    <td><select class="small" onchange="setStatus(${x.id}, this.value)">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${k === x.status ? 'selected' : ''}>${v}</option>`).join('')}</select><br><span class="muted">${esc(x.statusLabel)}</span></td>
+    <td>${x.google ? '✅' : '—'}</td><td class="num">${x.sent}</td><td class="num">${x.received}</td><td class="num">${x.unknown}</td><td class="num">${x.estCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+    <td><button class="small" onclick="link(${x.id})">Link</button></td></tr>`).join('') || '<tr><td colspan="9" class="muted">Nenhum cliente ainda. Use o simulador ao lado.</td></tr>';
+  $('#simNote').textContent = d.dryRun ? 'Converse como se fosse um cliente. Nada é enviado de verdade.' : 'Simulador desligado: o WhatsApp real está ativo.';
+}
+async function setStatus(id, status) { try { await api(`/api/admin/tenants/${id}/status`, 'POST', { status }); toast('Situação alterada'); load(); } catch (e) { toast(e.message); } }
+async function link(id) { const r = await api(`/api/admin/tenants/${id}/link`); await navigator.clipboard?.writeText(r.url).catch(() => {}); prompt('Link de acesso (15 min, uso único):', r.url); }
+
+function bubble(text, dir, buttons) {
+  const b = document.createElement('div');
+  b.className = `bubble ${dir === 'in' ? 'in' : ''}`;
+  b.textContent = text;
+  if (buttons?.length) {
+    const wrap = document.createElement('div'); wrap.className = 'btns';
+    for (const btn of buttons) { const s = document.createElement('span'); s.textContent = btn.reply.title; s.style.cursor = 'pointer'; s.onclick = () => sim(btn.reply.id, btn.reply.title); wrap.append(s); }
+    b.append(wrap);
+  }
+  $('#chat').append(b); $('#chat').scrollTop = 1e9;
+}
+function showOut(list) {
+  for (const m of list) {
+    if (m.type === 'text') bubble(m.text.body, 'out');
+    else if (m.type === 'interactive') bubble(m.interactive.body.text, 'out', m.interactive.action.buttons);
+    else bubble(`(modelo "${m.template.name}") ${m.template.components?.[0]?.parameters?.map((p) => p.text).join(' | ') || ''}`, 'out');
+  }
+}
+async function sim(text, shown) {
+  bubble(shown || text, 'in');
+  try { const r = await api('/api/admin/simulate', 'POST', { phone: $('#phone').value, text, profileName: $('#pname').value }); showOut(r.replies); load(); } catch (e) { toast(e.message); }
+}
+async function runTick(one) {
+  try { const r = await api('/api/admin/tick', 'POST', one ? { phone: $('#phone').value } : {}); const mine = r.sent.filter((m) => m.to === $('#phone').value.replace(/\D/g, '')); showOut(mine); toast(`${r.sent.length} mensagem(ns) automática(s)`); load(); } catch (e) { toast(e.message); }
+}
+async function openPanel() {
+  const t = (await api('/api/admin/tenants')).tenants.find((x) => x.phone === $('#phone').value.replace(/\D/g, ''));
+  if (!t) return toast('Esse número ainda não é cliente');
+  const r = await api(`/api/admin/tenants/${t.id}/link`); window.open(r.url, '_blank');
+}
+$('#send').onsubmit = (e) => { e.preventDefault(); const v = $('#msg').value.trim(); if (!v) return; $('#msg').value = ''; sim(v); };
+load(); setInterval(load, 30000);
+</script>
+</body>
+</html>

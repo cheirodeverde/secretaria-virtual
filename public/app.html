@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f3d34">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="stylesheet" href="/base.css">
+<title>Secretária de Bolso</title>
+<style>
+  body { padding-bottom: calc(80px + env(safe-area-inset-bottom)); }
+  header { background: var(--brand); color: #fff; padding: calc(16px + env(safe-area-inset-top)) 20px 26px; border-radius: 0 0 26px 26px; }
+  header small { opacity: .75; letter-spacing: .04em; text-transform: uppercase; font-size: 11px; }
+  header h1 { margin: 4px 0 10px; font-size: 23px; }
+  header .pill { background: rgba(255,255,255,.14); color: #fff; }
+  main { padding: 0 14px; margin: -12px auto 0; display: grid; gap: 14px; max-width: 600px; }
+  .tab { display: none; gap: 14px; } .tab.on { display: grid; }
+  nav.bottom { position: fixed; bottom: 0; left: 0; right: 0; background: var(--card); border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(5, 1fr); padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); z-index: 10; }
+  nav.bottom button { background: none; padding: 6px 2px; font-size: 11px; font-weight: 500; color: var(--muted); display: grid; gap: 2px; justify-items: center; }
+  nav.bottom button b { font-size: 19px; font-weight: 400; }
+  nav.bottom button.on { color: var(--brand); font-weight: 700; }
+  .ev { display: grid; grid-template-columns: 52px 1fr; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); }
+  .ev:first-child { border-top: 0; }
+  .ev time { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--brand-2); }
+  .ev time small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+  .ev .w { font-size: 13px; color: var(--muted); }
+  .ev.past { opacity: .45; }
+  .task { display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+  .task:first-child { border-top: 0; }
+  .task input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--ok); }
+  .task .n { font-weight: 700; color: var(--brand-2); margin-right: 4px; }
+  .task .due { font-size: 12.5px; color: var(--muted); } .task .due.late { color: var(--bad); font-weight: 600; }
+  .rule { border-top: 1px solid var(--line); padding: 12px 0; }
+  .rule:first-of-type { border-top: 0; }
+  .rule details summary { cursor: pointer; color: var(--brand-2); font-size: 13px; margin-top: 6px; }
+  .rule .editor { display: grid; gap: 8px; margin-top: 10px; }
+  .log div { padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; display: grid; grid-template-columns: 46px 1fr; gap: 8px; }
+  .log .m { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .empty { color: var(--muted); text-align: center; padding: 16px 0; }
+  .plan-opt { border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: flex; gap: 10px; align-items: center; cursor: pointer; }
+  .plan-opt input { width: auto; }
+</style>
+</head>
+<body>
+<header>
+  <small id="today">—</small>
+  <h1 id="hello">Olá!</h1>
+  <div class="row" style="justify-content:flex-start;flex-wrap:wrap;gap:6px" id="pills"></div>
+</header>
+
+<main>
+  <!-- ===================== HOJE ===================== -->
+  <div class="tab on" id="t-hoje">
+    <section class="card" id="connect" hidden>
+      <p class="label">Primeiro passo</p>
+      <p style="margin:0 0 12px">Conecte sua Google Agenda para receber os avisos dos seus compromissos. É só leitura.</p>
+      <a class="btn primary" href="/app/conectar-google" style="display:block">Conectar Google Agenda</a>
+    </section>
+    <section class="card" id="blocked" hidden>
+      <div class="att" id="blockedText"></div>
+      <button class="primary" style="width:100%;margin-top:10px" onclick="go('conta')">Escolher plano</button>
+    </section>
+    <section class="card">
+      <div class="row"><p class="label" style="margin:0">Hoje</p><span class="muted" id="busy"></span></div>
+      <div id="events" style="margin-top:8px"><div class="empty">Carregando…</div></div>
+      <div id="attention"></div>
+    </section>
+    <section class="card">
+      <p class="label">Tarefas de hoje</p>
+      <div id="todayTasks"></div>
+    </section>
+    <section class="card">
+      <p class="label">Resumo da manhã: é assim que chega</p>
+      <div class="chat"><div class="bubble" id="briefing">…</div></div>
+      <div class="grid2" style="margin-top:10px">
+        <button class="primary" onclick="act(this, () => api('/api/app/send/resumo', 'POST'), 'Resumo enviado no WhatsApp')">Enviar agora</button>
+        <button onclick="act(this, () => api('/api/app/sync', 'POST'), 'Agenda sincronizada')">Sincronizar</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===================== TAREFAS ===================== -->
+  <div class="tab" id="t-tarefas">
+    <section class="card">
+      <p class="label">Nova tarefa</p>
+      <form id="newTask" class="stack">
+        <input name="title" placeholder='Ex.: ligar pro contador amanhã 10h' autocomplete="off" required>
+        <button class="primary" type="submit">Adicionar</button>
+        <p class="muted" style="margin:0">Pode escrever a data junto: "sexta à tarde", "dia 15", "amanhã 9h".</p>
+      </form>
+    </section>
+    <section class="card">
+      <p class="label">Pendentes</p>
+      <div id="openTasks"></div>
+    </section>
+    <section class="card">
+      <p class="label">Concluídas recentemente</p>
+      <div id="doneTasks"></div>
+    </section>
+  </div>
+
+  <!-- ===================== REGRAS ===================== -->
+  <div class="tab" id="t-regras">
+    <section class="card">
+      <p class="label">Avisos automáticos</p>
+      <p class="muted" style="margin-top:-4px">Ligue, desligue e edite o texto de cada aviso. As palavras entre chaves são preenchidas automaticamente.</p>
+      <div id="systemRules"></div>
+    </section>
+    <section class="card">
+      <div class="row"><p class="label" style="margin:0">Minhas regras</p><span class="muted" id="ruleLimit"></span></div>
+      <div id="customRules" style="margin-top:8px"></div>
+    </section>
+    <section class="card">
+      <p class="label">Criar regra</p>
+      <form id="newRule" class="stack">
+        <label>Nome<input name="name" placeholder="Ex.: Follow-up de clientes" required></label>
+        <div class="grid2">
+          <label>Quando<select name="trigger" id="trigger">
+            <option value="after_event">Depois de compromissos</option>
+            <option value="before_event">Antes de compromissos</option>
+            <option value="daily">Todo dia em um horário</option>
+          </select></label>
+          <label id="offWrap">Minutos<input name="offsetMin" type="number" min="0" value="30"></label>
+          <label id="timeWrap" hidden>Horário<input name="time" type="time" value="18:00"></label>
+        </div>
+        <label id="filterWrap">Só se o título tiver (opcional)<input name="titleContains" placeholder="Ex.: cliente"></label>
+        <label>Dias da semana (vazio = todos)
+          <div class="chips" id="weekdays"></div>
+        </label>
+        <label>Mensagem<textarea name="script" id="ruleScript" required>Como foi {titulo}? Se precisar de follow-up, me mande: tarefa retornar para o cliente amanhã 10h</textarea></label>
+        <div class="chips" id="ruleVars"></div>
+        <div class="chat"><div class="bubble" id="rulePreview">…</div></div>
+        <button class="primary" type="submit">Salvar regra</button>
+      </form>
+    </section>
+  </div>
+
+  <!-- ===================== AJUSTES ===================== -->
+  <div class="tab" id="t-ajustes">
+    <section class="card">
+      <div class="row">
+        <div><b>Avisos ativos</b><div class="muted">Ou mande PAUSAR / RETOMAR no WhatsApp</div></div>
+        <label class="switch"><input type="checkbox" id="active"><span></span></label>
+      </div>
+    </section>
+    <section class="card">
+      <p class="label">Horários</p>
+      <form id="settings" class="stack">
+        <div class="grid2">
+          <label>Resumo da manhã<input name="briefingTime" type="time"></label>
+          <label>Prévia de amanhã<input name="previewTime" type="time"></label>
+          <label>Início do expediente<input name="workStart" type="time"></label>
+          <label>Fim do expediente<input name="workEnd" type="time"></label>
+          <label>Não perturbe — de<input name="quietStart" type="time"></label>
+          <label>até<input name="quietEnd" type="time"></label>
+          <label>Lembrete online (min antes)<input name="reminderLeadMin" type="number" min="0"></label>
+          <label>Tempo de deslocamento (min)<input name="travelBufferMin" type="number" min="0"></label>
+          <label>Limite de reuniões/dia (h)<input name="maxMeetingHours" type="number" min="1" step="0.5"></label>
+          <label>Bloco de foco mínimo (min)<input name="focusMinMinutes" type="number" min="15" step="15"></label>
+        </div>
+        <label>Agendas (IDs separados por vírgula) <span id="calLimit"></span><input name="calendarIds" placeholder="primary"></label>
+        <button class="primary" type="submit">Salvar</button>
+      </form>
+    </section>
+    <section class="card">
+      <p class="label">Google Agenda</p>
+      <div class="row"><span id="googleInfo" class="muted"></span><span id="googleBtn"></span></div>
+    </section>
+    <section class="card">
+      <p class="label">Perfil</p>
+      <form id="profile" class="stack">
+        <div class="grid2"><label>Nome<input name="name"></label><label>E-mail<input name="email" type="email"></label></div>
+        <button type="submit">Salvar perfil</button>
+      </form>
+    </section>
+  </div>
+
+  <!-- ===================== CONTA ===================== -->
+  <div class="tab" id="t-conta">
+    <section class="card">
+      <p class="label">Assinatura</p>
+      <p style="margin:0 0 12px" id="statusText"></p>
+      <form id="subscribe" class="stack">
+        <div id="planOpts" class="stack"></div>
+        <div class="grid2"><label>CPF ou CNPJ<input name="cpfCnpj" inputmode="numeric" required></label><label>E-mail para recibo<input name="email" type="email"></label></div>
+        <button class="primary" type="submit" id="subBtn">Assinar</button>
+        <p class="muted" style="margin:0">Pagamento seguro pelo Asaas: Pix, cartão ou boleto. Cancele quando quiser.</p>
+      </form>
+    </section>
+    <section class="card">
+      <p class="label">Últimas mensagens</p>
+      <div class="log" id="log"></div>
+    </section>
+    <section class="card stack">
+      <button onclick="act(this, () => api('/api/app/send/teste', 'POST'), 'Mensagem de teste enviada')">Enviar mensagem de teste</button>
+      <button onclick="logout()">Sair deste aparelho</button>
+      <button class="danger" onclick="delAccount()">Excluir minha conta e meus dados</button>
+    </section>
+  </div>
+</main>
+
+<nav class="bottom">
+  <button data-tab="hoje" class="on"><b>📅</b>Hoje</button>
+  <button data-tab="tarefas"><b>✅</b>Tarefas</button>
+  <button data-tab="regras"><b>⚙️</b>Regras</button>
+  <button data-tab="ajustes"><b>🕐</b>Ajustes</button>
+  <button data-tab="conta"><b>👤</b>Conta</button>
+</nav>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const hm = (iso) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+const dur = (m) => { const h = Math.floor(m / 60), r = m % 60; return h ? (r ? `${h}h${String(r).padStart(2, '0')}` : `${h}h`) : `${r} min`; };
+const toast = (m) => { const t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2800); };
+async function api(url, method = 'GET', body) {
+  const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  if (r.status === 401) { location.href = '/sem-acesso'; throw new Error('Sessão expirada'); }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || `Erro ${r.status}`);
+  return data;
+}
+async function act(btn, fn, ok) {
+  if (btn) btn.disabled = true;
+  try { await fn(); if (ok) toast(ok); await refresh(); } catch (e) { toast(e.message); } finally { if (btn) btn.disabled = false; }
+}
+let me = {}; let rulesData = {};
+const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+function go(tab) {
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('on', t.id === `t-${tab}`));
+  document.querySelectorAll('nav.bottom button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+  history.replaceState(null, '', `#${tab}`);
+  window.scrollTo(0, 0);
+}
+document.querySelectorAll('nav.bottom button').forEach((b) => b.onclick = () => go(b.dataset.tab));
+
+// ---------------------------------------------------------------- dados
+async function loadMe() {
+  me = await api('/api/me');
+  const first = (me.name || '').split(' ')[0];
+  $('#hello').textContent = first ? `Olá, ${first}` : 'Olá!';
+  $('#today').textContent = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
+  const cls = me.access === 'ok' ? 'ok' : me.access === 'grace' ? 'warn' : 'bad';
+  $('#pills').innerHTML = [
+    `<span class="pill ${cls}">${esc(me.statusLabel)}</span>`,
+    me.google.connected ? '<span class="pill ok">Agenda conectada</span>' : '<span class="pill warn">Agenda não conectada</span>',
+    me.settings.paused ? '<span class="pill bad">Avisos pausados</span>' : '',
+    me.whatsappDryRun ? '<span class="pill warn">WhatsApp simulado</span>' : '',
+  ].join('');
+  $('#connect').hidden = me.google.connected;
+  $('#blocked').hidden = me.access !== 'blocked';
+  $('#blockedText').textContent = me.status === 'trial' ? 'Seu teste grátis terminou e os avisos estão pausados.' : me.status === 'past_due' ? 'Seu pagamento está pendente e os avisos estão pausados.' : 'Sua assinatura está cancelada.';
+  for (const el of $('#settings').elements) if (el.name && el.name in me.settings) el.value = me.settings[el.name];
+  $('#active').checked = !me.settings.paused;
+  $('#calLimit').textContent = `(até ${me.limits.maxCalendars})`;
+  $('#profile').name.value = me.name || ''; $('#profile').email.value = me.email || '';
+  $('#subscribe').email.value = me.email || '';
+  $('#googleInfo').textContent = me.google.connected ? `Conectada${me.google.email ? ` (${me.google.email})` : ''}${me.google.lastSyncAt ? ` · sinc. ${hm(me.google.lastSyncAt)}` : ''}${me.google.error ? ` · erro: ${me.google.error}` : ''}` : 'Não conectada';
+  $('#googleBtn').innerHTML = me.google.connected ? '<button class="small" onclick="disconnectGoogle(this)">Desconectar</button>' : '<a class="btn small primary" href="/app/conectar-google">Conectar</a>';
+  const end = me.trialEndsAt ? new Date(me.trialEndsAt).toLocaleDateString('pt-BR') : '';
+  $('#statusText').innerHTML = me.status === 'trial' ? `Você está no <b>teste grátis</b> até ${end}, com tudo do plano Profissional liberado.` : `Situação: <b>${esc(me.statusLabel)}</b>.`;
+  $('#planOpts').innerHTML = Object.entries(me.plans).map(([k, p]) => `
+    <label class="plan-opt"><input type="radio" name="plan" value="${k}" ${k === (me.status === 'active' ? me.plan : 'essencial') ? 'checked' : ''}>
+      <span><b style="color:var(--ink)">${p.name} — R$ ${p.price}/mês</b><br>${p.maxCalendars} agenda(s) · ${p.maxCustomRules > 100 ? 'regras ilimitadas' : `até ${p.maxCustomRules} regras`}</span></label>`).join('');
+  $('#subBtn').textContent = me.status === 'active' ? 'Trocar de plano' : 'Assinar';
+}
+
+async function loadToday() {
+  const d = await api('/api/app/today');
+  const now = Date.now();
+  const timed = d.events.filter((e) => !e.allDay);
+  $('#busy').textContent = timed.length ? `${timed.length} compromissos · ${dur(d.busyMin)}` : '';
+  $('#events').innerHTML = d.events.length ? d.events.map((e) => `
+    <div class="ev ${!e.allDay && new Date(e.end) < now ? 'past' : ''}">
+      <time>${e.allDay ? 'Dia todo' : `${hm(e.start)}<small>${hm(e.end)}</small>`}</time>
+      <div><b>${esc(e.title)}</b><div class="w">${e.location ? `📍 ${esc(e.location)}` : e.meetLink ? `💻 <a href="${esc(e.meetLink)}">entrar na chamada</a>` : ''}</div></div>
+    </div>`).join('') : `<div class="empty">${me.google?.connected ? '📭 Nenhum compromisso hoje' : 'Conecte a agenda para ver seus compromissos'}</div>`;
+  $('#attention').innerHTML = d.attention.length ? `<div class="att" style="margin-top:10px">${d.attention.map((a) => `<div>⚠️ ${esc(a)}</div>`).join('')}</div>` : '';
+  $('#todayTasks').innerHTML = d.tasks.length ? d.tasks.map(taskRow).join('') : '<div class="empty">Nada para hoje 🎉</div>';
+  const p = await api('/api/app/rules/preview', 'POST', { systemKey: 'resumo_manha' });
+  $('#briefing').textContent = p.text;
+}
+
+function dueText(t) {
+  if (!t.dueAt) return '';
+  const d = new Date(t.dueAt);
+  const late = t.hasTime ? d < new Date() : d < new Date(new Date().toDateString());
+  const label = d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) + (t.hasTime ? ` às ${hm(t.dueAt)}` : '');
+  return `<div class="due ${late ? 'late' : ''}">${late ? '⚠️ ' : '📅 '}${label}</div>`;
+}
+const taskRow = (t) => `
+  <div class="task">
+    <input type="checkbox" ${t.status === 'done' ? 'checked disabled' : ''} onchange="act(null, () => api('/api/app/tasks/${t.id}', 'PUT', { status: 'done' }), 'Concluída ✅')">
+    <div>${t.status === 'open' ? `<span class="n">${t.num}.</span>` : ''}${esc(t.title)}${dueText(t)}</div>
+    ${t.status === 'open' ? `<button class="small" onclick="editTask(${t.id}, '${esc(t.title).replace(/'/g, '&#39;')}')">✏️</button>` : ''}
+  </div>`;
+
+async function loadTasks() {
+  const d = await api('/api/app/tasks');
+  $('#openTasks').innerHTML = d.open.length ? d.open.map(taskRow).join('') : '<div class="empty">✅ Nenhuma tarefa pendente</div>';
+  $('#doneTasks').innerHTML = d.done.length ? d.done.map(taskRow).join('') : '<div class="empty">—</div>';
+}
+function editTask(id, title) {
+  const when = prompt(`Novo prazo para "${title}"\n(ex.: amanhã 10h, sexta, dia 20 — vazio remove o prazo; escreva APAGAR para excluir)`);
+  if (when === null) return;
+  if (when.trim().toLowerCase() === 'apagar') return act(null, () => api(`/api/app/tasks/${id}`, 'DELETE'), 'Tarefa apagada');
+  act(null, () => api(`/api/app/tasks/${id}`, 'PUT', when.trim() ? { dueText: when } : { dueAt: null }), 'Tarefa atualizada');
+}
+$('#newTask').onsubmit = (e) => { e.preventDefault(); const f = e.target; act(f.querySelector('button'), async () => { await api('/api/app/tasks', 'POST', { title: f.title.value }); f.reset(); }, 'Tarefa criada'); };
+
+// ---------------------------------------------------------------- regras
+async function loadRules() {
+  rulesData = await api('/api/app/rules');
+  $('#ruleLimit').textContent = rulesData.limit > 100 ? `${rulesData.used} criadas` : `${rulesData.used} de ${rulesData.limit}`;
+  const sys = rulesData.rules.filter((r) => r.systemKey);
+  $('#systemRules').innerHTML = sys.map((r) => `
+    <div class="rule">
+      <div class="row"><div><b>${esc(r.name)}</b><div class="muted">${esc(r.meta.description)}</div></div>
+        <label class="switch"><input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="act(null, () => api('/api/app/rules/${r.id}', 'PUT', { enabled: this.checked }), this.checked ? 'Aviso ligado' : 'Aviso desligado')"><span></span></label></div>
+      <details><summary>Editar mensagem</summary>
+        <div class="editor">
+          <textarea id="s-${r.id}" oninput="previewSys(${r.id}, '${r.systemKey}')">${esc(r.script)}</textarea>
+          <div class="chips">${r.meta.vars.map((v) => `<button type="button" onclick="insertVar('s-${r.id}', '${v}'); previewSys(${r.id}, '${r.systemKey}')">{${v}}</button>`).join('')}</div>
+          <div class="chat"><div class="bubble" id="p-${r.id}">Toque em "Ver prévia"</div></div>
+          <div class="grid2"><button class="primary small" onclick="act(this, () => api('/api/app/rules/${r.id}', 'PUT', { script: $('#s-${r.id}').value }), 'Mensagem salva')">Salvar</button>
+          <button class="small" onclick="act(this, () => api('/api/app/rules/${r.id}', 'PUT', { reset: true }), 'Texto original restaurado')">Restaurar original</button></div>
+          <button class="small" onclick="previewSys(${r.id}, '${r.systemKey}')">Ver prévia</button>
+        </div>
+      </details>
+    </div>`).join('');
+  const custom = rulesData.rules.filter((r) => !r.systemKey);
+  $('#customRules').innerHTML = custom.length ? custom.map((r) => {
+    const when = r.trigger === 'daily' ? `Todo dia às ${r.params.time}` : `${r.params.offsetMin} min ${r.trigger === 'before_event' ? 'antes' : 'depois'} de compromissos${r.params.titleContains ? ` com "${esc(r.params.titleContains)}"` : ''}`;
+    const days = r.params.weekdays?.length ? ` · ${r.params.weekdays.map((d) => DAYS[d]).join(', ')}` : '';
+    return `<div class="rule"><div class="row"><div><b>${esc(r.name)}</b><div class="muted">${when}${days}</div></div>
+      <label class="switch"><input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="act(null, () => api('/api/app/rules/${r.id}', 'PUT', { enabled: this.checked }), 'Regra atualizada')"><span></span></label></div>
+      <div class="muted" style="margin-top:6px;white-space:pre-wrap">${esc(r.script)}</div>
+      <button class="small danger" style="margin-top:8px" onclick="confirm('Apagar esta regra?') && act(this, () => api('/api/app/rules/${r.id}', 'DELETE'), 'Regra apagada')">Apagar</button></div>`;
+  }).join('') : '<div class="empty">Nenhuma regra ainda. Crie abaixo — ex.: um follow-up depois de reuniões com clientes.</div>';
+  renderRuleVars();
+}
+let pt;
+function previewSys(id, key) {
+  clearTimeout(pt);
+  pt = setTimeout(async () => { const p = await api('/api/app/rules/preview', 'POST', { systemKey: key, script: $(`#s-${id}`).value }); $(`#p-${id}`).textContent = p.text || '(mensagem vazia)'; }, 250);
+}
+function insertVar(id, v) { const ta = document.getElementById(id); const i = ta.selectionStart ?? ta.value.length; ta.value = `${ta.value.slice(0, i)}{${v}}${ta.value.slice(i)}`; ta.focus(); }
+
+$('#weekdays').innerHTML = DAYS.map((d, i) => `<button type="button" data-d="${i}" onclick="this.classList.toggle('primary'); previewCustom()">${d}</button>`).join('');
+function ruleBody() {
+  const f = $('#newRule');
+  const weekdays = [...document.querySelectorAll('#weekdays .primary')].map((b) => Number(b.dataset.d));
+  const trigger = f.trigger.value;
+  const params = trigger === 'daily' ? { time: f.time.value, weekdays } : { offsetMin: Number(f.offsetMin.value), titleContains: f.titleContains.value, weekdays };
+  return { name: f.name.value, trigger, params, script: f.script.value };
+}
+function renderRuleVars() {
+  const trig = $('#trigger').value;
+  $('#offWrap').hidden = trig === 'daily'; $('#filterWrap').hidden = trig === 'daily'; $('#timeWrap').hidden = trig !== 'daily';
+  const vars = rulesData.triggers?.[trig]?.vars || [];
+  $('#ruleVars').innerHTML = vars.map((v) => `<button type="button" onclick="insertVar('ruleScript', '${v}'); previewCustom()">{${v}}</button>`).join('');
+  previewCustom();
+}
+let pc;
+function previewCustom() {
+  clearTimeout(pc);
+  pc = setTimeout(async () => { try { const p = await api('/api/app/rules/preview', 'POST', ruleBody()); $('#rulePreview').textContent = p.text || '(mensagem vazia)'; } catch (e) { $('#rulePreview').textContent = e.message; } }, 300);
+}
+$('#trigger').onchange = renderRuleVars;
+$('#newRule').addEventListener('input', previewCustom);
+$('#newRule').onsubmit = (e) => { e.preventDefault(); act(e.submitter, async () => { await api('/api/app/rules', 'POST', ruleBody()); e.target.name.value = ''; }, 'Regra criada'); };
+
+// ---------------------------------------------------------------- ajustes e conta
+$('#settings').onsubmit = (e) => { e.preventDefault(); act(e.submitter, () => api('/api/app/settings', 'PUT', Object.fromEntries(new FormData(e.target))), 'Ajustes salvos'); };
+$('#profile').onsubmit = (e) => { e.preventDefault(); act(e.submitter, () => api('/api/app/profile', 'PUT', Object.fromEntries(new FormData(e.target))), 'Perfil salvo'); };
+$('#active').onchange = (e) => act(null, () => api('/api/app/settings', 'PUT', { paused: !e.target.checked }), e.target.checked ? 'Avisos ativados' : 'Avisos pausados');
+$('#subscribe').onsubmit = (e) => {
+  e.preventDefault();
+  act(e.submitter, async () => {
+    const r = await api('/api/app/subscribe', 'POST', Object.fromEntries(new FormData(e.target)));
+    if (r.demo) toast('Modo demonstração: configure ASAAS_API_KEY para cobrar de verdade.'); else location.href = r.url;
+  });
+};
+const disconnectGoogle = (btn) => confirm('Desconectar a Google Agenda? Os avisos de compromissos param.') && act(btn, () => api('/api/app/google/disconnect', 'POST'), 'Agenda desconectada');
+const logout = async () => { await api('/api/app/logout', 'POST'); location.href = '/sem-acesso'; };
+async function delAccount() {
+  if (prompt('Isso apaga sua conta, tarefas, regras e mensagens, e desconecta o Google. Para confirmar, escreva EXCLUIR') !== 'EXCLUIR') return;
+  await api('/api/app/delete-account', 'POST'); location.href = '/';
+}
+async function loadLog() {
+  const log = await api('/api/app/messages');
+  $('#log').innerHTML = log.length ? log.map((l) => `<div><b>${hm(l.at + (l.at.endsWith('Z') ? '' : 'Z'))}</b><span class="m">${l.dir === 'in' ? '⬅️ ' : l.error ? '❌ ' : '➡️ '}${esc(l.error || (l.text || '').split('\n')[0])}${l.via ? ` · ${esc(l.via)}` : ''}</span></div>`).join('') : '<div class="empty">Nada ainda.</div>';
+}
+
+async function refresh() {
+  await loadMe();
+  await Promise.all([loadToday(), loadTasks(), loadRules(), loadLog()]);
+}
+const q = new URLSearchParams(location.search);
+if (q.get('google')) { toast(q.get('google') === 'ok' ? 'Google Agenda conectada! ✅' : 'Não foi possível conectar o Google'); history.replaceState(null, '', location.pathname + location.hash); }
+if (q.get('assinatura') === 'demo') toast('Modo demonstração: cobrança não configurada.');
+if (location.hash) go(location.hash.slice(1));
+refresh().catch((e) => toast(e.message));
+setInterval(() => loadToday().catch(() => {}), 60000);
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+</script>
+</body>
+</html>

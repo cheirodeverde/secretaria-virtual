@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/base.css"><link rel="icon" href="/icon.svg">
+<title>Acesse pelo WhatsApp — Secretária de Bolso</title>
+</head>
+<body style="display:grid;place-items:center;min-height:100vh;padding:20px">
+  <section class="card" style="max-width:380px;text-align:center">
+    <img src="/icon.svg" alt="" width="56">
+    <h2>Acesse pelo WhatsApp</h2>
+    <p class="muted">Por segurança, o painel abre por um link de uso único. Mande <b>PAINEL</b> para a Secretária no WhatsApp e toque no link que ela responder.</p>
+    <a class="btn primary" id="wa" href="/">Abrir o WhatsApp</a>
+  </section>
+<script>
+fetch('/api/public').then((r) => r.json()).then((p) => { if (p.whatsapp) document.getElementById('wa').href = `https://wa.me/${p.whatsapp}?text=PAINEL`; });
+</script>
+</body>
+</html>

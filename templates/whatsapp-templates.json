@@ -1,0 +1,138 @@
+{
+  "_como_usar": "Crie estes 7 modelos no WhatsApp Manager (categoria UTILIDADE, idioma Português (BR)) ou rode: npm run criar-templates. Os nomes precisam ser exatamente estes. Todos terminam convidando a responder, o que reabre a janela de 24h.",
+  "templates": [
+    {
+      "name": "sec_resumo_dia",
+      "category": "UTILITY",
+      "language": "pt_BR",
+      "components": [
+        {
+          "type": "BODY",
+          "text": "Bom dia! Hoje você tem {{1}} compromisso(s) na agenda, começando com {{2}}. {{3}} Responda AGENDA para ver o dia completo.",
+          "example": {
+            "body_text": [
+              [
+                "5",
+                "Reunião com cliente às 08:30",
+                "Atenção: 1 conflito de horário. 2 tarefas para hoje."
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "sec_amanha",
+      "category": "UTILITY",
+      "language": "pt_BR",
+      "components": [
+        {
+          "type": "BODY",
+          "text": "Prévia de amanhã: você tem {{1}} compromisso(s), o primeiro é {{2}}. {{3}} Responda AMANHA para ver tudo.",
+          "example": {
+            "body_text": [
+              [
+                "3",
+                "Café com fornecedor às 07:30",
+                "Começa cedo: saia até 07:00."
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "sec_lembrete",
+      "category": "UTILITY",
+      "language": "pt_BR",
+      "components": [
+        {
+          "type": "BODY",
+          "text": "Lembrete da sua agenda: {{1}} começa às {{2}}. {{3}} Responda AJUDA para ver os comandos.",
+          "example": {
+            "body_text": [
+              [
+                "Reunião com cliente",
+                "14:00",
+                "Saia até 13:30. Local: Av. Paulista, 1000."
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "sec_alerta",
+      "category": "UTILITY",
+      "language": "pt_BR",
+      "components": [
+        {
+          "type": "BODY",
+          "text": "Atenção na sua agenda: {{1}} Responda AGENDA para ver os detalhes.",
+          "example": {
+            "body_text": [
+              [
+                "conflito na qua, 11/11 entre Reunião A (10:00) e Call B (10:30)."
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "sec_tarefa",
+      "category": "UTILITY",
+      "language": "pt_BR",
+      "components": [
+        {
+          "type": "BODY",
+          "text": "Lembrete de tarefa: {{1}}. Responda FEITO para concluir ou ADIAR para remarcar.",
+          "example": {
+            "body_text": [
+              [
+                "Ligar para o contador"
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "sec_personalizado",
+      "category": "UTILITY",
+      "language": "pt_BR",
+      "components": [
+        {
+          "type": "BODY",
+          "text": "Mensagem da sua secretária: {{1}} Responda AJUDA para ver os comandos.",
+          "example": {
+            "body_text": [
+              [
+                "Como foi a reunião com o cliente? Se precisar de follow-up, me mande uma tarefa."
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "sec_assinatura",
+      "category": "UTILITY",
+      "language": "pt_BR",
+      "components": [
+        {
+          "type": "BODY",
+          "text": "Aviso da sua conta na Secretária de Bolso: {{1}} Mais detalhes em {{2}} ou responda ASSINATURA.",
+          "example": {
+            "body_text": [
+              [
+                "seu teste grátis termina amanhã.",
+                "https://secretaria.exemplo.com/app"
+              ]
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

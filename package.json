@@ -1,0 +1,24 @@
+{
+  "name": "secretaria-de-bolso",
+  "version": "0.2.0",
+  "description": "MVP: secretária de bolso para pequenos empresários — Google Agenda + avisos estratégicos no WhatsApp",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "demo": "DEMO_MODE=true WHATSAPP_DRY_RUN=true ADMIN_PASSWORD=admin node --disable-warning=ExperimentalWarning src/server.js",
+    "test": "NODE_ENV=test DB_FILE=:memory: TZ=America/Sao_Paulo WHATSAPP_TOKEN= node --disable-warning=ExperimentalWarning --test test/*.test.js",
+    "criar-templates": "node scripts/criar-templates.js",
+    "demo:conversa": "TZ=America/Sao_Paulo node --disable-warning=ExperimentalWarning scripts/demo-conversa.js"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@googleapis/calendar": "^20.1.0",
+    "dotenv": "^18.0.10",
+    "express": "^5.3.0",
+    "google-auth-library": "^11.3.4"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  }
+}

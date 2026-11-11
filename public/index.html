@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f3d34">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/base.css">
+<title>Secretária de Bolso — sua secretária no WhatsApp</title>
+<meta name="description" content="Lembretes inteligentes da sua Google Agenda e lista de tarefas, tudo pelo WhatsApp. Para pequenos empresários.">
+<style>
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+  header.hero { background: var(--brand); color: #fff; padding: 28px 0 64px; }
+  nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 44px; }
+  nav b { font-size: 18px; display: flex; gap: 10px; align-items: center; }
+  nav img { width: 34px; height: 34px; }
+  .hero-grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 40px; align-items: center; }
+  .hero h1 { font-size: clamp(32px, 5vw, 50px); line-height: 1.05; margin: 0 0 16px; }
+  .hero p { font-size: 18px; opacity: .85; margin: 0 0 26px; max-width: 34ch; }
+  .cta { background: var(--accent); color: #2b1d05; font-size: 17px; padding: 15px 22px; }
+  .hero small { display: block; margin-top: 12px; opacity: .7; }
+  .phone { background: var(--chat); border-radius: 28px; padding: 16px; box-shadow: 0 30px 60px rgba(0,0,0,.25); color: var(--ink); }
+  .phone .bubble { font-size: 13.5px; }
+  section.block { padding: 64px 0; }
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .steps div { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
+  .steps b { display: block; font-size: 17px; margin: 8px 0 6px; }
+  .steps span { font-size: 28px; }
+  h2.title { font-size: 30px; margin: 0 0 8px; }
+  .lead { color: var(--muted); margin: 0 0 28px; font-size: 17px; }
+  .feats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px 28px; }
+  .feats p { margin: 0; padding: 12px 0; border-top: 1px solid var(--line); }
+  .plans { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; max-width: 760px; }
+  .plan { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; }
+  .plan.best { border: 2px solid var(--brand-2); }
+  .plan .price { font-size: 38px; font-weight: 700; margin: 6px 0; }
+  .plan ul { padding-left: 18px; margin: 12px 0 0; color: var(--muted); }
+  footer { padding: 32px 0 48px; color: var(--muted); font-size: 13px; }
+  @media (max-width: 760px) { .hero-grid, .steps, .feats, .plans { grid-template-columns: 1fr; } .phone { order: -1; } }
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <nav><b><img src="/icon.svg" alt=""> Secretária de Bolso</b><a href="#planos" style="color:#fff">Planos</a></nav>
+    <div class="hero-grid">
+      <div>
+        <h1>Sua secretária mora no seu WhatsApp.</h1>
+        <p>Ela lê sua Google Agenda, avisa a hora de sair para cada compromisso e cuida das suas tarefas. Você só conversa.</p>
+        <a class="btn cta" id="cta" href="#">Começar grátis pelo WhatsApp</a>
+        <small id="trial">14 dias grátis · sem cartão · cancele quando quiser</small>
+      </div>
+      <div class="phone">
+        <div class="chat" style="background:none;padding:0">
+          <div class="bubble">☀️ Bom dia, Ana! Hoje: 5 compromissos.<br><br>⚠️ Conflito: Visita ao fornecedor (09:45) × Call com contador (10:00)<br>🎯 Livre para foco: 14:30–17:00</div>
+          <div class="bubble in">tarefa enviar orçamento pro Mercado Bom sexta à tarde</div>
+          <div class="bubble">✅ Anotado! Tarefa 3: Enviar orçamento pro Mercado Bom — sex às 14:00</div>
+          <div class="bubble">⏰ Em 45 min: <b>Reunião com cliente</b> às 14:00<br>🚗 Saia até 13:30 — rota no Maps</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section class="block"><div class="wrap">
+  <h2 class="title">Como funciona</h2>
+  <p class="lead">Em 2 minutos você está organizado, sem instalar nada.</p>
+  <div class="steps">
+    <div><span>💬</span><b>1. Mande um "oi"</b>A Secretária responde no WhatsApp e cria sua conta de teste.</div>
+    <div><span>📅</span><b>2. Conecte a agenda</b>Um toque para ligar sua Google Agenda. É só leitura: ela não altera nada.</div>
+    <div><span>✅</span><b>3. Pronto</b>Receba o resumo do dia e lembretes no tempo certo. Mande tarefas como mandaria para uma pessoa.</div>
+  </div>
+</div></section>
+
+<section class="block" style="background:var(--card);border-block:1px solid var(--line)"><div class="wrap">
+  <h2 class="title">Avisos que fazem diferença</h2>
+  <p class="lead">Ela não diz só "você tem reunião às 14h". Ela diz o que você precisa fazer.</p>
+  <div class="feats">
+    <p>☀️ <b>Resumo da manhã</b> com compromissos, conflitos, tarefas do dia e tempo livre para focar.</p>
+    <p>🚗 <b>Hora de sair</b> para compromissos presenciais, com a rota no Maps.</p>
+    <p>⚠️ <b>Conflitos e deslocamentos apertados</b> avisados com antecedência, para dar tempo de remarcar.</p>
+    <p>📝 <b>Tarefas por mensagem</b>: "me lembra de pagar o boleto dia 15". Lembrete com botões Feito e Adiar.</p>
+    <p>🌙 <b>Prévia de amanhã</b>: se o dia começa cedo e o que vale preparar hoje.</p>
+    <p>⚙️ <b>Do seu jeito</b>: horários, "não perturbe", textos das mensagens e regras próprias, como um follow-up depois de reuniões com clientes.</p>
+  </div>
+</div></section>
+
+<section class="block" id="planos"><div class="wrap">
+  <h2 class="title">Planos</h2>
+  <p class="lead">Comece com o teste grátis. Pague com Pix, cartão ou boleto.</p>
+  <div class="plans" id="plans"></div>
+</div></section>
+
+<footer><div class="wrap">© Secretária de Bolso · <a href="/privacidade.html">Política de privacidade</a> · <a href="/termos.html">Termos de uso</a></div></footer>
+
+<script>
+fetch('/api/public').then((r) => r.json()).then((p) => {
+  const msg = encodeURIComponent('Oi! Quero testar a Secretária de Bolso');
+  document.getElementById('cta').href = p.whatsapp ? `https://wa.me/${p.whatsapp}?text=${msg}` : '/admin';
+  document.getElementById('trial').textContent = `${p.trialDays} dias grátis · sem cartão · cancele quando quiser`;
+  const feats = {
+    essencial: ['1 Google Agenda', 'Todos os avisos estratégicos', 'Tarefas pelo WhatsApp', 'Textos das mensagens editáveis', 'Até 3 regras personalizadas'],
+    profissional: ['Até 5 agendas', 'Tudo do Essencial', 'Regras personalizadas ilimitadas', 'Suporte prioritário'],
+  };
+  document.getElementById('plans').innerHTML = Object.entries(p.plans).map(([k, v]) => `
+    <div class="plan ${k === 'profissional' ? 'best' : ''}">
+      <b>${v.name}</b><div class="price">R$ ${v.price}<small style="font-size:15px;font-weight:400;color:var(--muted)">/mês</small></div>
+      <ul>${feats[k].map((f) => `<li>${f}</li>`).join('')}</ul>
+    </div>`).join('');
+});
+</script>
+</body>
+</html>
