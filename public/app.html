@@ -27,6 +27,16 @@
   .ev time small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
   .ev .w { font-size: 13px; color: var(--muted); }
   .ev.past { opacity: .45; }
+  .ev.act { grid-template-columns: 52px 1fr auto; align-items: start; }
+  .ev .acts { display: flex; gap: 4px; }
+  .day-h { font-size: 12.5px; font-weight: 700; color: var(--brand-2); margin: 14px 0 2px; text-transform: capitalize; }
+  .day-h:first-child { margin-top: 0; }
+  .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 0 5px; margin-left: 4px; }
+  dialog { border: 0; border-radius: var(--radius); padding: 18px; width: min(92vw, 380px); background: var(--card); color: var(--ink); }
+  dialog::backdrop { background: rgba(0,0,0,.35); }
+  .check { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 14px; }
+  .check input { width: auto; }
+  details.more summary { cursor: pointer; color: var(--brand-2); font-size: 13px; }
   .task { display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
   .task:first-child { border-top: 0; }
   .task input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--ok); }
@@ -55,7 +65,7 @@
   <div class="tab on" id="t-hoje">
     <section class="card" id="connect" hidden>
       <p class="label">Primeiro passo</p>
-      <p style="margin:0 0 12px">Conecte sua Google Agenda para receber os avisos dos seus compromissos. É só leitura.</p>
+      <p style="margin:0 0 12px" id="connectText">Conecte sua Google Agenda para receber os avisos dos seus compromissos.</p>
       <a class="btn primary" href="/app/conectar-google" style="display:block">Conectar Google Agenda</a>
     </section>
     <section class="card" id="blocked" hidden>
@@ -66,6 +76,37 @@
       <div class="row"><p class="label" style="margin:0">Hoje</p><span class="muted" id="busy"></span></div>
       <div id="events" style="margin-top:8px"><div class="empty">Carregando…</div></div>
       <div id="attention"></div>
+    </section>
+    <section class="card" id="reauth" hidden>
+      <p class="label">Novo: marcar compromissos</p>
+      <p style="margin:0 0 12px">Agora a Secretária pode marcar, remarcar e desmarcar compromissos para você, pelo WhatsApp ou por aqui. Para isso, autorize a edição da agenda. Ela só altera algo quando você pede.</p>
+      <a class="btn primary" href="/app/conectar-google" style="display:block">Autorizar edição da agenda</a>
+    </section>
+    <section class="card" id="newEventCard" hidden>
+      <p class="label">Marcar compromisso</p>
+      <form id="newEvent" class="stack" autocomplete="off">
+        <input name="text" placeholder="Ex.: reunião com João amanhã 15h">
+        <details class="more" id="evFields">
+          <summary>Ou preencha campo a campo</summary>
+          <div class="stack" style="margin-top:10px">
+            <label>Compromisso <input name="title" placeholder="Reunião com João"></label>
+            <div class="grid2"><label>Dia <input name="date" type="date"></label><label class="check" style="padding-bottom:10px"><input type="checkbox" name="allDay"> Dia todo</label></div>
+            <div class="grid2"><label>Início <input name="start" type="time"></label><label>Fim <input name="end" type="time"></label></div>
+            <label>Local (opcional) <input name="location" placeholder="Rua Augusta, 100"></label>
+            <label class="check"><input type="checkbox" name="online"> Criar link do Google Meet</label>
+          </div>
+        </details>
+        <button class="primary" type="submit">Marcar na agenda</button>
+        <p class="muted" style="margin:0">Pelo WhatsApp é igual: "marcar dentista sexta 10h por 40 min".</p>
+      </form>
+    </section>
+    <section class="card" id="upcomingCard" hidden>
+      <p class="label">Próximos 7 dias</p>
+      <div id="upcoming"></div>
+      <details class="more" style="margin-top:12px" id="calLogBox">
+        <summary>Últimas alterações feitas pela Secretária</summary>
+        <div class="log" id="calLog" style="margin-top:6px"></div>
+      </details>
     </section>
     <section class="card">
       <p class="label">Tarefas de hoje</p>
@@ -161,6 +202,10 @@
           <label>Bloco de foco mínimo (min)<input name="focusMinMinutes" type="number" min="15" step="15"></label>
         </div>
         <label>Agendas (IDs separados por vírgula) <span id="calLimit"></span><input name="calendarIds" placeholder="primary"></label>
+        <div class="grid2">
+          <label>Duração padrão de compromisso (min)<input name="defaultEventMin" type="number" min="5" max="480" step="5"></label>
+          <label>Agenda para marcar compromissos<input name="writeCalendarId" placeholder="a primeira da lista"></label>
+        </div>
         <button class="primary" type="submit">Salvar</button>
       </form>
     </section>
@@ -209,6 +254,16 @@
   <button data-tab="conta"><b>👤</b>Conta</button>
 </nav>
 <div class="toast" id="toast"></div>
+<dialog id="moveDlg">
+  <form id="moveForm" class="stack" method="dialog">
+    <p class="label" style="margin:0">Remarcar</p>
+    <b id="moveTitle"></b>
+    <span class="muted" id="moveWas"></span>
+    <div class="grid2"><label>Novo dia <input name="date" type="date" required></label><label id="moveTimeL">Novo horário <input name="start" type="time"></label></div>
+    <span class="muted" id="moveGuests"></span>
+    <div class="grid2"><button type="button" onclick="$('#moveDlg').close()">Voltar</button><button class="primary" type="submit" value="ok">Remarcar</button></div>
+  </form>
+</dialog>
 
 <script>
 const $ = (s) => document.querySelector(s);
@@ -252,6 +307,12 @@ async function loadMe() {
     me.whatsappDryRun ? '<span class="pill warn">WhatsApp simulado</span>' : '',
   ].join('');
   $('#connect').hidden = me.google.connected;
+  $('#connectText').textContent = me.google.writeAvailable
+    ? 'Conecte sua Google Agenda para receber os avisos e marcar compromissos pelo WhatsApp. Ela só altera algo quando você pede.'
+    : 'Conecte sua Google Agenda para receber os avisos dos seus compromissos. É só leitura.';
+  $('#reauth').hidden = !(me.google.connected && me.google.writeAvailable && !me.google.canWrite);
+  $('#newEventCard').hidden = !(me.google.connected && me.google.canWrite);
+  $('#upcomingCard').hidden = !me.google.connected;
   $('#blocked').hidden = me.access !== 'blocked';
   $('#blockedText').textContent = me.status === 'trial' ? 'Seu teste grátis terminou e os avisos estão pausados.' : me.status === 'past_due' ? 'Seu pagamento está pendente e os avisos estão pausados.' : 'Sua assinatura está cancelada.';
   for (const el of $('#settings').elements) if (el.name && el.name in me.settings) el.value = me.settings[el.name];
@@ -396,16 +457,80 @@ async function loadLog() {
   $('#log').innerHTML = log.length ? log.map((l) => `<div><b>${hm(l.at + (l.at.endsWith('Z') ? '' : 'Z'))}</b><span class="m">${l.dir === 'in' ? '⬅️ ' : l.error ? '❌ ' : '➡️ '}${esc(l.error || (l.text || '').split('\n')[0])}${l.via ? ` · ${esc(l.via)}` : ''}</span></div>`).join('') : '<div class="empty">Nada ainda.</div>';
 }
 
+// ---------------------------------------------------------------- compromissos (próximos dias)
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const dayName = (d) => d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' });
+let upcoming = [];
+async function loadUpcoming() {
+  if (!me.google?.connected) return;
+  const d = await api('/api/app/events');
+  upcoming = d.events.map((e) => ({ ...e, start: new Date(e.start), end: new Date(e.end) }));
+  let last = '';
+  $('#upcoming').innerHTML = upcoming.length ? upcoming.map((e, i) => {
+    const k = ymd(e.start);
+    const head = k !== last ? `<div class="day-h">${esc(dayName(e.start))}</div>` : '';
+    last = k;
+    const edit = d.canWrite && e.mine !== false;
+    return `${head}<div class="ev act">
+      <time>${e.allDay ? 'Dia todo' : `${hm(e.start)}<small>${hm(e.end)}</small>`}</time>
+      <div><b>${esc(e.title)}</b>${e.recurring ? '<span class="tag">repete</span>' : ''}${e.mine === false ? '<span class="tag">convite</span>' : ''}
+        <div class="w">${e.location ? `📍 ${esc(e.location)}` : e.meetLink ? `💻 <a href="${esc(e.meetLink)}">entrar na chamada</a>` : ''}</div></div>
+      ${edit ? `<div class="acts"><button class="small" title="Remarcar" onclick="openMove(${i})">✏️</button><button class="small danger" title="Cancelar" onclick="cancelEv(this, ${i})">🗑️</button></div>` : '<span></span>'}
+    </div>`;
+  }).join('') : '<div class="empty">📭 Nenhum compromisso nos próximos dias</div>';
+  const log = await api('/api/app/calendar-log');
+  $('#calLogBox').hidden = !log.length;
+  const verb = { create: '➕ Marcou', move: '🔁 Remarcou', cancel: '🗑️ Cancelou' };
+  $('#calLog').innerHTML = log.map((l) => `<div><b>${new Date(l.at + (l.at.endsWith('Z') ? '' : 'Z')).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</b><span class="m">${l.error ? '❌ ' : ''}${verb[l.action] || l.action} ${esc(l.title || '')}${(l.after || l.before) && !(l.after || l.before).allDay ? ` · ${new Date((l.after || l.before).start).toLocaleString('pt-BR', { weekday: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''} · ${l.source === 'painel' ? 'painel' : l.source === 'desfazer' ? 'desfeito' : 'WhatsApp'}</span></div>`).join('');
+}
+let moving = null;
+function openMove(i) {
+  moving = upcoming[i];
+  const f = $('#moveForm');
+  $('#moveTitle').textContent = moving.title;
+  $('#moveWas').textContent = `Hoje está: ${dayName(moving.start)}${moving.allDay ? ' (dia todo)' : `, ${hm(moving.start)}–${hm(moving.end)}`}`;
+  $('#moveGuests').textContent = [moving.attendees ? `👥 ${moving.attendees} convidado(s) serão avisados pelo Google.` : '', moving.recurring ? '🔁 Só esta data muda.' : ''].filter(Boolean).join(' ');
+  f.date.value = ymd(moving.start);
+  f.start.value = moving.allDay ? '' : hm(moving.start);
+  $('#moveTimeL').hidden = moving.allDay;
+  $('#moveDlg').showModal();
+}
+$('#moveForm').onsubmit = (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = { date: f.date.value, start: f.start.value };
+  act(e.submitter, async () => { await api(`/api/app/events/${encodeURIComponent(moving.id)}`, 'PATCH', body); $('#moveDlg').close(); }, 'Remarcado ✅');
+};
+function cancelEv(btn, i) {
+  const ev = upcoming[i];
+  const guests = ev.attendees ? `\n\nOs ${ev.attendees} convidado(s) serão avisados pelo Google.` : '';
+  if (!confirm(`Cancelar "${ev.title}" (${dayName(ev.start)}${ev.allDay ? '' : ` ${hm(ev.start)}`})?${guests}`)) return;
+  act(btn, () => api(`/api/app/events/${encodeURIComponent(ev.id)}`, 'DELETE'), 'Compromisso cancelado');
+}
+$('#newEvent').onsubmit = (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const text = f.text.value.trim();
+  const body = text ? { text } : {
+    title: f.title.value, date: f.date.value, start: f.start.value, end: f.end.value, allDay: f.allDay.checked, location: f.location.value, online: f.online.checked,
+  };
+  act(e.submitter, async () => {
+    const ev = await api('/api/app/events', 'POST', body);
+    f.reset();
+    toast(`Marcado: ${ev.title} · ${new Date(ev.start).toLocaleString('pt-BR', { weekday: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`);
+  });
+};
+
 async function refresh() {
   await loadMe();
-  await Promise.all([loadToday(), loadTasks(), loadRules(), loadLog()]);
+  await Promise.all([loadToday(), loadUpcoming(), loadTasks(), loadRules(), loadLog()]);
 }
 const q = new URLSearchParams(location.search);
 if (q.get('google')) { toast(q.get('google') === 'ok' ? 'Google Agenda conectada! ✅' : 'Não foi possível conectar o Google'); history.replaceState(null, '', location.pathname + location.hash); }
 if (q.get('assinatura') === 'demo') toast('Modo demonstração: cobrança não configurada.');
 if (location.hash) go(location.hash.slice(1));
 refresh().catch((e) => toast(e.message));
-setInterval(() => loadToday().catch(() => {}), 60000);
+setInterval(() => { loadToday().catch(() => {}); loadUpcoming().catch(() => {}); }, 60000);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 </script>
 </body>

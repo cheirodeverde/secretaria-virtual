@@ -46,7 +46,7 @@
     <div class="hero-grid">
       <div>
         <h1>Sua secretária mora no seu WhatsApp.</h1>
-        <p>Ela lê sua Google Agenda, avisa a hora de sair para cada compromisso e cuida das suas tarefas. Você só conversa.</p>
+        <p>Ela acompanha sua Google Agenda, avisa a hora de sair para cada compromisso, marca e remarca reuniões quando você pede e cuida das suas tarefas. Você só conversa.</p>
         <a class="btn cta" id="cta" href="#">Começar grátis pelo WhatsApp</a>
         <small id="trial">14 dias grátis · sem cartão · cancele quando quiser</small>
       </div>
@@ -67,7 +67,7 @@
   <p class="lead">Em 2 minutos você está organizado, sem instalar nada.</p>
   <div class="steps">
     <div><span>💬</span><b>1. Mande um "oi"</b>A Secretária responde no WhatsApp e cria sua conta de teste.</div>
-    <div><span>📅</span><b>2. Conecte a agenda</b>Um toque para ligar sua Google Agenda. É só leitura: ela não altera nada.</div>
+    <div><span>📅</span><b>2. Conecte a agenda</b>Um toque para ligar sua Google Agenda. Ela só altera algo quando você pede e confirma.</div>
     <div><span>✅</span><b>3. Pronto</b>Receba o resumo do dia e lembretes no tempo certo. Mande tarefas como mandaria para uma pessoa.</div>
   </div>
 </div></section>
@@ -99,7 +99,7 @@ fetch('/api/public').then((r) => r.json()).then((p) => {
   document.getElementById('cta').href = p.whatsapp ? `https://wa.me/${p.whatsapp}?text=${msg}` : '/admin';
   document.getElementById('trial').textContent = `${p.trialDays} dias grátis · sem cartão · cancele quando quiser`;
   const feats = {
-    essencial: ['1 Google Agenda', 'Todos os avisos estratégicos', 'Tarefas pelo WhatsApp', 'Textos das mensagens editáveis', 'Até 3 regras personalizadas'],
+    essencial: ['1 Google Agenda', 'Todos os avisos estratégicos', 'Marcar e remarcar compromissos pelo WhatsApp', 'Tarefas pelo WhatsApp', 'Textos das mensagens editáveis', 'Até 3 regras personalizadas'],
     profissional: ['Até 5 agendas', 'Tudo do Essencial', 'Regras personalizadas ilimitadas', 'Suporte prioritário'],
   };
   document.getElementById('plans').innerHTML = Object.entries(p.plans).map(([k, v]) => `

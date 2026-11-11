@@ -6,7 +6,8 @@ const WEEKDAYS = { domingo: 0, segunda: 1, terca: 2, quarta: 3, quinta: 4, sexta
 const NUM_WORDS = { um: 1, uma: 1, dois: 2, duas: 2, tres: 3, quatro: 4, cinco: 5, seis: 6, meia: 0.5 };
 
 /** Minúsculas e sem acento, mantendo o mesmo comprimento do original (para recortar o texto original). */
-export const normalize = (s) => [...s].map((c) => c.normalize('NFD')[0].toLowerCase()).join('');
+// Caracteres fora do BMP (emojis) ocupam 2 posições: ficam como estão para não desalinhar os índices.
+export const normalize = (s) => [...String(s)].map((c) => (c.length === 1 ? c.normalize('NFD')[0] : c).toLowerCase()).join('');
 
 function findAll(norm, re) {
   const out = [];
@@ -130,7 +131,8 @@ export function parseDateTime(text, now = new Date()) {
     if (date <= now) date = addDays(date, 1);
   }
 
-  return { date, hasTime, found: Boolean(date), rest: cleanup(cutRanges(original, cuts)) };
+  // hasDay: a frase citou o dia (e não só o horário) — usado para remarcar mantendo o dia original.
+  return { date, hasTime, hasDay: Boolean(exact || day), found: Boolean(date), rest: cleanup(cutRanges(original, cuts)) };
 }
 
 function cutRanges(s, ranges) {
@@ -147,7 +149,7 @@ function cutRanges(s, ranges) {
 
 const DANGLING = /^(?:para|pra|pro|no|na|em|de|do|da|ate|às|as|a|o|e|,|-|:)$/i;
 
-function cleanup(s) {
+export function cleanup(s) {
   const words = s.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
   while (words.length && DANGLING.test(normalize(words.at(-1)))) words.pop();
   while (words.length && /^(?:,|-|:)$/.test(words[0])) words.shift();

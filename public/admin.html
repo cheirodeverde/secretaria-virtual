@@ -26,7 +26,7 @@
     <div class="kpis" id="kpis"></div>
     <section class="card" style="overflow-x:auto">
       <p class="label">Clientes</p>
-      <table><thead><tr><th>#</th><th>Cliente</th><th>Situação</th><th>Agenda</th><th class="num">Enviadas</th><th class="num">Recebidas</th><th class="num">Não entendidas</th><th class="num">Custo (R$)</th><th></th></tr></thead><tbody id="rows"></tbody></table>
+      <table><thead><tr><th>#</th><th>Cliente</th><th>Situação</th><th>Agenda</th><th class="num">Enviadas</th><th class="num">Recebidas</th><th class="num">Não entendidas</th><th class="num">Alterações na agenda</th><th class="num">Custo (R$)</th><th></th></tr></thead><tbody id="rows"></tbody></table>
     </section>
   </div>
   <section class="card stack">
@@ -68,8 +68,8 @@ async function load() {
   $('#rows').innerHTML = t.map((x) => `<tr>
     <td>${x.id}</td><td><b>${esc(x.name || '—')}</b><br><span class="muted">+${esc(x.phone)}</span></td>
     <td><select class="small" onchange="setStatus(${x.id}, this.value)">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${k === x.status ? 'selected' : ''}>${v}</option>`).join('')}</select><br><span class="muted">${esc(x.statusLabel)}</span></td>
-    <td>${x.google ? '✅' : '—'}</td><td class="num">${x.sent}</td><td class="num">${x.received}</td><td class="num">${x.unknown}</td><td class="num">${x.estCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-    <td><button class="small" onclick="link(${x.id})">Link</button></td></tr>`).join('') || '<tr><td colspan="9" class="muted">Nenhum cliente ainda. Use o simulador ao lado.</td></tr>';
+    <td>${x.google ? (x.googleWrite ? '✅ edita' : '✅ leitura') : '—'}</td><td class="num">${x.sent}</td><td class="num">${x.received}</td><td class="num">${x.unknown}</td><td class="num">${x.calendarActions}</td><td class="num">${x.estCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+    <td><button class="small" onclick="link(${x.id})">Link</button></td></tr>`).join('') || '<tr><td colspan="10" class="muted">Nenhum cliente ainda. Use o simulador ao lado.</td></tr>';
   $('#simNote').textContent = d.dryRun ? 'Converse como se fosse um cliente. Nada é enviado de verdade.' : 'Simulador desligado: o WhatsApp real está ativo.';
 }
 async function setStatus(id, status) { try { await api(`/api/admin/tenants/${id}/status`, 'POST', { status }); toast('Situação alterada'); load(); } catch (e) { toast(e.message); } }

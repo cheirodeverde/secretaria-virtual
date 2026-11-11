@@ -25,6 +25,8 @@ export const config = {
   },
 
   google: {
+    // Permite criar/remarcar/cancelar compromissos (escopo calendar.events). false = só leitura, como na v0.2.
+    calendarWrite: bool(process.env.CALENDAR_WRITE, true),
     clientId: process.env.GOOGLE_CLIENT_ID || '',
     clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
     redirectUri: process.env.GOOGLE_REDIRECT_URI || '',
@@ -48,6 +50,7 @@ export const config = {
     webhookToken: process.env.ASAAS_WEBHOOK_TOKEN || '',
   },
 
+  get calendarWrite() { return this.google.calendarWrite; },
   syncEveryMinutes: Number(process.env.SYNC_EVERY_MINUTES || 5),
 };
 

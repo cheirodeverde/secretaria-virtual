@@ -20,6 +20,8 @@ export const DEFAULT_SETTINGS = {
   maxMeetingHours: 6,        // acima disso o dia é considerado sobrecarregado
   focusMinMinutes: 60,       // menor bloco livre que vale sugerir como "tempo de foco"
   paused: false,
+  defaultEventMin: 60,       // duração padrão de um compromisso marcado pelo WhatsApp sem hora de término
+  writeCalendarId: '',       // agenda onde criar compromissos (vazio = a primeira de calendarIds)
 };
 
 const PREP_KEYWORDS = /(cliente|proposta|apresenta|pitch|entrevista|negocia|investidor|banco|contador|fornecedor|or[cç]amento|contrato|venda|reuni[aã]o com)/i;

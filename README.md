@@ -1,9 +1,9 @@
-# 📱 Secretária de Bolso v0.2: MVP SaaS
+# 📱 Secretária de Bolso v0.3: MVP SaaS
 
 A Secretária de Bolso é uma secretária para pequenos empresários que funciona dentro do WhatsApp. Ela é vendida por assinatura mensal.
 
 O que ela faz:
-- **sincroniza com a Google Agenda** (somente leitura);
+- **sincroniza com a Google Agenda** e **marca, remarca e desmarca compromissos** quando o cliente pede (sempre com confirmação);
 - envia **avisos estratégicos** pelo WhatsApp;
 - cuida da **lista de tarefas**;
 - deixa o cliente **configurar regras e textos** das mensagens;
@@ -15,7 +15,7 @@ O documento de requisitos completo fica no Claude Docs (link na entrega). Este R
 
 ```bash
 npm install                # Node 22.13+
-npm test                   # 12 testes: datas, intenções, motor de regras e uma conversa completa
+npm test                   # 17 testes: datas, intenções, compromissos, motor de regras e conversas completas
 npm run demo:conversa      # imprime no terminal uma conversa real com a Secretária
 npm run demo               # servidor com agenda fictícia e WhatsApp simulado
 ```
@@ -34,6 +34,7 @@ Com o `npm run demo` rodando, abra **http://localhost:3000/admin** (usuário qua
 | **Cadastro pelo WhatsApp** | O cliente manda "oi" para o número da Secretária. A conta é criada em teste grátis de 14 dias. Ela pergunta o nome e manda o link para conectar o Google. |
 | **Avisos automáticos** | Resumo da manhã, prévia de amanhã, lembrete antes de cada compromisso ("saia até 13:30" + rota), conflitos, deslocamento apertado, mudanças na agenda e lembrete de tarefa com botões ✅ Feito / ⏰ Adiar 1h / 📅 Amanhã. |
 | **Conversa** | Entende agenda, horários livres, semana, criar/listar/concluir/adiar/apagar tarefas, ajustes ("resumo às 7h", "não perturbe das 22h às 7h"), pausar e conta. Datas naturais: "sexta à tarde", "dia 15", "daqui a 2 horas", "segunda que vem 8h". |
+| **Mexer na agenda** | "marcar reunião com João amanhã das 14h às 15h30", "agendar dentista sexta 10h por 40 min", "call com contador quinta 9h online" (cria link do Meet), "almoço dia 20 meio-dia na Rua Augusta 100", "feriado segunda o dia todo", "remarcar dentista pra 16h", "mudar a reunião com João para sexta", "desmarcar reunião". Sempre mostra o resumo e pede confirmação (botões ✅/✖️), avisa conflitos, avisa quando os convidados serão notificados e quando o evento se repete (muda só aquela data). Se o nome bater com vários compromissos, lista e pergunta o número. DESFAZER volta a última alteração por 30 min. Convites de outras pessoas não são alterados. Também dá para marcar, remarcar e cancelar pelo painel. |
 | **Regras e roteiros** | Cada aviso tem um texto editável com variáveis ({nome}, {agenda}, {tarefas}…) e pode ser desligado. O cliente também cria regras próprias: antes de um evento, depois de um evento ou todo dia, com filtro por título e por dia da semana. A prévia usa os dados reais da agenda. |
 | **Painel (PWA)** | Telas Hoje, Tarefas, Regras, Ajustes e Conta. O acesso é por link mágico enviado no WhatsApp (comando PAINEL), sem senha. |
 | **Assinatura** | Pelo Asaas: o cliente informa CPF/CNPJ, recebe o link de pagamento e paga com Pix, cartão ou boleto. O webhook ativa a conta. Se atrasar, os avisos continuam por mais 3 dias; depois disso param e as respostas oferecem o link para pagar. |
@@ -46,7 +47,9 @@ Com o `npm run demo` rodando, abra **http://localhost:3000/admin** (usuário qua
    - ative a Google Calendar API;
    - configure a tela de consentimento OAuth no modo Externo, com os clientes do piloto como usuários de teste;
    - crie a credencial do tipo Web com o redirect `https://SEU-DOMINIO/auth/google/callback`.
-   - Para abrir o produto ao público, peça a verificação do app (o escopo de agenda é sensível). Ela exige vídeo, política de privacidade e domínio verificado.
+   - escopos: com `CALENDAR_WRITE=true` (padrão) o app pede `calendar.events` (ver e editar eventos); com `false`, só `calendar.readonly`, como na v0.2. Cadastre na tela de consentimento o escopo que vai usar.
+   - Para abrir o produto ao público, peça a verificação do app (o escopo de agenda é sensível). Ela exige vídeo, política de privacidade e domínio verificado. O vídeo precisa mostrar a criação/remarcação de um compromisso pelo WhatsApp.
+   - **Quem já usava a v0.2** conectou só com leitura. Ao pedir para marcar algo, a Secretária manda o link para autorizar a edição, e o painel mostra o botão "Autorizar edição da agenda". Nada quebra enquanto o cliente não autoriza.
 3. **Meta (WhatsApp Cloud API):**
    - crie o app e use o número da Secretária;
    - gere um token permanente de usuário do sistema;
@@ -70,7 +73,9 @@ src/
   scheduler.js        a cada minuto: sincroniza, calcula e envia
   dispatcher.js       único ponto de saída: anti-duplicidade, não perturbe, pausa, conta
   whatsapp.js         Cloud API: texto, botões, modelos, janela de 24h, assinatura do webhook
-  google.js           OAuth por cliente, tokens criptografados (AES-256-GCM)
+  nlu/event.js        pedidos de compromisso (início, fim, duração, local, Meet, dia todo)
+  calendar.js         achar o compromisso citado, conflitos, criar/remarcar/cancelar, histórico e desfazer
+  google.js           OAuth por cliente, tokens criptografados (AES-256-GCM), leitura e escrita na agenda
   billing.js          Asaas: assinatura + webhook idempotente
   account.js          situação da conta, teste, carência, link mágico
   db.js               SQLite embutido (node:sqlite), tudo filtrado por cliente
@@ -82,7 +87,7 @@ test/                 testes
 
 ## Limites conscientes (Fase 2)
 
-- Criar e remarcar eventos na Google Agenda pelo WhatsApp (exige o escopo `calendar.events` e uma nova verificação do Google).
+- Convidar pessoas para um compromisso pelo WhatsApp e responder convites (aceitar/recusar).
 - IA só para entender as frases, com a mesma lista fechada de intenções. Hoje o entendimento é por regras.
 - Áudio, tarefas recorrentes e delegar tarefa a funcionários.
 - Postgres e fila de jobs acima de cerca de 500 clientes. Fuso horário por cliente (hoje há um só para todos).

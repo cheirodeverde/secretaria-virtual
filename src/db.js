@@ -92,6 +92,26 @@ CREATE TABLE IF NOT EXISTS login_tokens (
   expires_at TEXT NOT NULL,
   used INTEGER NOT NULL DEFAULT 0
 );
+-- Tudo o que a Secretária mudou na Google Agenda do cliente (auditoria e suporte)
+CREATE TABLE IF NOT EXISTS calendar_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  action TEXT NOT NULL,                          -- create | move | cancel | undo
+  event_id TEXT,
+  title TEXT,
+  detail TEXT,                                   -- JSON { before, after }
+  source TEXT,                                   -- whatsapp | painel
+  error TEXT,
+  at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_log_tenant ON calendar_log(tenant_id, at);
+-- Agenda fictícia editável (DEMO_MODE): alterações feitas sobre os eventos de exemplo. data NULL = apagado.
+CREATE TABLE IF NOT EXISTS demo_events (
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  event_id TEXT NOT NULL,
+  data TEXT,
+  PRIMARY KEY (tenant_id, event_id)
+);
 CREATE TABLE IF NOT EXISTS billing_events (
   id TEXT PRIMARY KEY,
   received_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -181,6 +201,19 @@ export function setEvents(tenantId, events) {
     .run(tenantId, JSON.stringify(events), now());
 }
 
+const toCache = (e) => ({ ...e, start: new Date(e.start).toISOString(), end: new Date(e.end).toISOString() });
+
+/** Atualiza um evento no cache logo após a Secretária alterá-lo (a próxima sincronização não vê "mudança"). */
+export function upsertCachedEvent(tenantId, event) {
+  const list = getEvents(tenantId).filter((e) => e.id !== event.id);
+  list.push(event);
+  setEvents(tenantId, list.sort((a, b) => a.start - b.start).map(toCache));
+}
+
+export function removeCachedEvent(tenantId, eventId) {
+  setEvents(tenantId, getEvents(tenantId).filter((e) => e.id !== eventId).map(toCache));
+}
+
 export const hasEventsCache = (tenantId) => Boolean(sql().prepare('SELECT 1 FROM events_cache WHERE tenant_id = ?').get(tenantId));
 
 // ------------------------------------------------------------------ anti-duplicidade e fila
@@ -230,6 +263,28 @@ export function consumeLoginToken(hash) {
   sql().prepare('UPDATE login_tokens SET used = 1 WHERE token_hash = ?').run(hash);
   return r.tenant_id;
 }
+
+// ------------------------------------------------------------------ alterações na agenda
+
+export function logCalendar({ tenantId, action, eventId = null, title = null, before = null, after = null, source = 'whatsapp', error = null }) {
+  sql().prepare('INSERT INTO calendar_log (tenant_id, action, event_id, title, detail, source, error) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(tenantId, action, eventId, title, JSON.stringify({ before, after }), source, error);
+}
+
+export const listCalendarLog = (tenantId, limit = 20) => sql().prepare('SELECT * FROM calendar_log WHERE tenant_id = ? ORDER BY id DESC LIMIT ?')
+  .all(tenantId, limit).map((r) => ({ ...r, detail: JSON.parse(r.detail || '{}') }));
+
+export function calendarStats() {
+  const since = new Date(); since.setDate(1); since.setHours(0, 0, 0, 0);
+  return sql().prepare('SELECT tenant_id, COUNT(*) AS n FROM calendar_log WHERE at >= ? AND error IS NULL GROUP BY tenant_id').all(since.toISOString());
+}
+
+export const getDemoOverrides = (tenantId) => sql().prepare('SELECT event_id, data FROM demo_events WHERE tenant_id = ?').all(tenantId)
+  .map((r) => ({ id: r.event_id, data: r.data ? JSON.parse(r.data) : null }));
+export const setDemoOverride = (tenantId, eventId, data) => sql()
+  .prepare('INSERT INTO demo_events (tenant_id, event_id, data) VALUES (?, ?, ?) ON CONFLICT(tenant_id, event_id) DO UPDATE SET data = excluded.data')
+  .run(tenantId, eventId, data ? JSON.stringify(data) : null);
+export const clearDemoOverrides = (tenantId) => sql().prepare('DELETE FROM demo_events WHERE tenant_id = ?').run(tenantId);
 
 // ------------------------------------------------------------------ idempotência de cobrança
 

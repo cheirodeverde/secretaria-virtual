@@ -1,6 +1,6 @@
 {
   "name": "secretaria-de-bolso",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MVP: secretária de bolso para pequenos empresários — Google Agenda + avisos estratégicos no WhatsApp",
   "main": "src/server.js",
   "scripts": {

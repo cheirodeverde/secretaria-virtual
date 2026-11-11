@@ -46,3 +46,13 @@ console.log('\n\n— (20:00: prévia de amanhã) —');
 await processTenant(getTenant(t.id), at('20:00'));
 show('automático');
 await user('qual a capital da França?', at('20:05'));
+
+console.log('\n\n— (dia seguinte, 09:00: mexendo na agenda pelo WhatsApp) —');
+const d1 = addDays(today, 1);
+await user('marcar reunião com João amanhã das 14h às 15h30', at('09:00', d1));
+await user('sim', at('09:01', d1));
+await user('remarcar reunião com João pra 16h', at('09:02', d1));
+await user('sim', at('09:03', d1));
+await user('desmarcar reunião', at('09:04', d1));
+await user('não', at('09:05', d1));
+await user('desfazer', at('09:06', d1));

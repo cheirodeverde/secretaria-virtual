@@ -4,13 +4,16 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { accessState, effectivePlan, magicLink, statusLabel, trialDaysLeft } from './account.js';
 import { billingConfigured, handleBillingEvent, startSubscription, validWebhookToken } from './billing.js';
+import { cannotEdit, doCancel, doCreate, doMove, editableEvents } from './calendar.js';
 import { handleIncoming } from './conversation.js';
 import { safeEqual, sha256, sign, verify } from './crypto.js';
 import {
-  consumeLoginToken, deleteTenant, getEvents, getTenant, listMessages, listTenants, monthStats, openDb, queueSize, updateTenant,
+  calendarStats, consumeLoginToken, deleteTenant, getEvents, getTenant, listCalendarLog, listMessages, listTenants, monthStats, openDb, queueSize,
+  updateTenant,
 } from './db.js';
 import { dispatch } from './dispatcher.js';
-import { authUrl, connectDemo, disconnect, googleConfigured, handleCallback } from './google.js';
+import { authUrl, canWrite, connectDemo, disconnect, googleConfigured, handleCallback } from './google.js';
+import { parseEventText } from './nlu/event.js';
 import { analyzeDay, attentionItems, dayAgendaText } from './rules/analysis.js';
 import { buildBriefing, buildPreview, previewRule } from './rules/engine.js';
 import {
@@ -20,7 +23,7 @@ import { processTenant, startScheduler, syncTenant, tick } from './scheduler.js'
 import {
   completeTask, createTask, deleteTask, getTask, listTasks, tasksForDay, updateTask,
 } from './tasks.js';
-import { addDays, dayKey, fmtDayLong } from './time.js';
+import { addDays, addMinutes, atTime, dayKey, fmtDayLong } from './time.js';
 import { extractMessages, outbox, validSignature, whatsappConfigured } from './whatsapp.js';
 import { parseDateTime } from './nlu/datetime.js';
 
@@ -141,7 +144,7 @@ app.get('/app', session, page('app.html'));
 app.use('/api/me', session);
 app.use('/api/app', session);
 
-const NUM_FIELDS = ['reminderLeadMin', 'travelBufferMin', 'maxMeetingHours', 'focusMinMinutes'];
+const NUM_FIELDS = ['reminderLeadMin', 'travelBufferMin', 'maxMeetingHours', 'focusMinMinutes', 'defaultEventMin'];
 const HM_FIELDS = ['briefingTime', 'previewTime', 'workStart', 'workEnd', 'quietStart', 'quietEnd'];
 
 app.get('/api/me', (req, res) => {
@@ -150,7 +153,10 @@ app.get('/api/me', (req, res) => {
   res.json({
     name: t.name, phone: t.phone, email: t.email, plan: t.plan, status: t.status, statusLabel: statusLabel(t),
     access: accessState(t), trialDaysLeft: trialDaysLeft(t), trialEndsAt: t.trialEndsAt,
-    google: { connected: t.hasGoogle, email: t.googleEmail, error: t.googleError, lastSyncAt: t.lastSyncAt },
+    google: {
+      connected: t.hasGoogle, email: t.googleEmail, error: t.googleError, lastSyncAt: t.lastSyncAt,
+      canWrite: canWrite(t), writeAvailable: config.calendarWrite,
+    },
     settings: t.settings, limits: plan, plans: config.plans, billingConfigured: billingConfigured(),
     whatsappDryRun: config.whatsapp.dryRun, demoMode: config.demoMode, queued: queueSize(t.id),
   });
@@ -187,6 +193,81 @@ app.post('/api/app/sync', asyncH(async (req, res) => {
   const r = await syncTenant(req.tenant);
   res.status(r.ok ? 200 : 400).json({ ok: r.ok, error: getTenant(req.tenant.id).googleError });
 }));
+
+// --- compromissos (criar / remarcar / cancelar na Google Agenda)
+const eventOut = (e) => e && ({ ...e, start: e.start.toISOString(), end: e.end.toISOString() });
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const HM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const dateAt = (ymd, hm = '00:00') => { const [y, m, d] = ymd.split('-').map(Number); return atTime(new Date(y, m - 1, d), hm); };
+
+function canEditCalendar(req, res) {
+  const t = req.tenant;
+  if (!t.hasGoogle) { res.status(400).json({ error: 'Conecte sua Google Agenda primeiro.' }); return false; }
+  if (!config.calendarWrite) { res.status(403).json({ error: 'Edição da agenda desativada.' }); return false; }
+  if (!canWrite(t)) { res.status(403).json({ error: 'Autorize a edição da agenda: toque em "Autorizar edição".', reauth: true }); return false; }
+  if (accessState(t) === 'blocked') { res.status(402).json({ error: 'Sua conta está pausada. Escolha um plano para continuar.' }); return false; }
+  return true;
+}
+
+/** Corpo do painel → rascunho: { title, date, start, end | durationMin, allDay, location, online } ou { text } em português. */
+function draftFromBody(b, t) {
+  const defMin = Number(t.settings.defaultEventMin) || 60;
+  if (b.text) {
+    const ev = parseEventText(String(b.text).slice(0, 300), new Date(), { defaultMin: defMin });
+    if (!ev.title) throw new Error('Escreva o nome do compromisso.');
+    if (!ev.start || (!ev.hasTime && !ev.allDay)) throw new Error('Diga o dia e o horário. Ex.: "dentista sexta 10h".');
+    return { title: ev.title, start: ev.start, end: ev.end, allDay: ev.allDay, location: ev.location, online: ev.online };
+  }
+  const title = String(b.title || '').trim().slice(0, 200);
+  if (!title) throw new Error('Escreva o nome do compromisso.');
+  if (!DATE_RE.test(String(b.date || ''))) throw new Error('Escolha o dia.');
+  const allDay = Boolean(b.allDay);
+  if (allDay) { const start = dateAt(b.date); return { title, start, end: addDays(start, 1), allDay, location: b.location || null, online: false }; }
+  if (!HM_RE.test(String(b.start || ''))) throw new Error('Escolha o horário de início.');
+  const start = dateAt(b.date, b.start);
+  let end = HM_RE.test(String(b.end || '')) ? dateAt(b.date, b.end) : addMinutes(start, Math.min(Math.max(Number(b.durationMin) || defMin, 5), 24 * 60));
+  if (end <= start) throw new Error('O fim precisa ser depois do início.');
+  return { title, start, end, allDay, location: String(b.location || '').trim().slice(0, 200) || null, online: Boolean(b.online) };
+}
+
+app.get('/api/app/events', (req, res) => res.json({ events: editableEvents(req.tenant.id).map(eventOut), canWrite: canWrite(req.tenant) }));
+
+app.post('/api/app/events', asyncH(async (req, res) => {
+  if (!canEditCalendar(req, res)) return;
+  let draft;
+  try { draft = draftFromBody(req.body, req.tenant); } catch (e) { return res.status(400).json({ error: e.message }); }
+  if (draft.end <= new Date()) return res.status(400).json({ error: 'Esse horário já passou.' });
+  try { res.json(eventOut(await doCreate(req.tenant, draft, { source: 'painel' }))); } catch (e) { res.status(502).json({ error: e.message }); }
+}));
+
+app.patch('/api/app/events/:id', asyncH(async (req, res) => {
+  if (!canEditCalendar(req, res)) return;
+  const ev = getEvents(req.tenant.id).find((e) => e.id === req.params.id);
+  if (!ev) return res.status(404).json({ error: 'Compromisso não encontrado. Atualize a página.' });
+  const why = cannotEdit(ev);
+  if (why) return res.status(403).json({ error: why });
+  const { date, start: hm } = req.body;
+  if (!DATE_RE.test(String(date || '')) || (!ev.allDay && !HM_RE.test(String(hm || '')))) return res.status(400).json({ error: 'Escolha o novo dia e horário.' });
+  const start = dateAt(date, ev.allDay ? '00:00' : hm);
+  const end = new Date(start.getTime() + (ev.end - ev.start));
+  if (end <= new Date()) return res.status(400).json({ error: 'Esse horário já passou.' });
+  try { res.json(eventOut(await doMove(req.tenant, ev, start, end, { source: 'painel' }))); } catch (e) { res.status(502).json({ error: e.message }); }
+}));
+
+app.delete('/api/app/events/:id', asyncH(async (req, res) => {
+  if (!canEditCalendar(req, res)) return;
+  const ev = getEvents(req.tenant.id).find((e) => e.id === req.params.id);
+  if (!ev) return res.status(404).json({ error: 'Compromisso não encontrado. Atualize a página.' });
+  const why = cannotEdit(ev);
+  if (why) return res.status(403).json({ error: why });
+  try { await doCancel(req.tenant, ev, { source: 'painel' }); res.json({ ok: true }); } catch (e) { res.status(502).json({ error: e.message }); }
+}));
+
+app.get('/api/app/calendar-log', (req, res) => res.json(listCalendarLog(req.tenant.id, 20).map((r) => ({
+  action: r.action, title: r.title, source: r.source, error: r.error, at: r.at,
+  before: r.detail.before ? { start: r.detail.before.start, end: r.detail.before.end, allDay: r.detail.before.allDay } : null,
+  after: r.detail.after ? { start: r.detail.after.start, end: r.detail.after.end, allDay: r.detail.after.allDay } : null,
+}))));
 
 app.post('/api/app/google/disconnect', asyncH(async (req, res) => { await disconnect(req.tenant); res.json({ ok: true }); }));
 
@@ -294,6 +375,7 @@ const COST_PER_MSG = Number(process.env.COST_PER_MESSAGE_BRL || 0.035);
 app.get('/admin', admin, page('admin.html'));
 app.get('/api/admin/tenants', admin, (_req, res) => {
   const stats = Object.fromEntries(monthStats().map((s) => [s.tenant_id, s]));
+  const cal = Object.fromEntries(calendarStats().map((s) => [s.tenant_id, s.n]));
   res.json({
     costPerMessage: COST_PER_MSG,
     dryRun: config.whatsapp.dryRun,
@@ -303,7 +385,8 @@ app.get('/api/admin/tenants', admin, (_req, res) => {
       const msgs = (s.sent || 0) + (s.received || 0);
       return {
         id: t.id, name: t.name, phone: t.phone, plan: t.plan, status: t.status, statusLabel: statusLabel(t), access: accessState(t),
-        google: t.hasGoogle, createdAt: t.createdAt, sent: s.sent || 0, received: s.received || 0, unknown: s.unknown || 0,
+        google: t.hasGoogle, googleWrite: t.hasGoogle && canWrite(t), calendarActions: cal[t.id] || 0,
+        createdAt: t.createdAt, sent: s.sent || 0, received: s.received || 0, unknown: s.unknown || 0,
         estCost: +(msgs * COST_PER_MSG).toFixed(2),
       };
     }),

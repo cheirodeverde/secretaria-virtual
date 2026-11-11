@@ -1,10 +1,16 @@
 // Modo conversacional: recebe a mensagem do cliente, entende a intenção e responde.
 // Escopo fechado (agenda, tarefas, configurações, conta) — sem conversa livre, por produto e por política da Meta.
 import { accessState, magicLink, statusLabel, trialDaysLeft } from './account.js';
+import {
+  cannotEdit, conflictsFor, conflictText, doCancel, doCreate, doMove, doUndo, editableEvents, eventSummary, findEvents, guestsText,
+  newTimes, pickLine, recurringText, whenText,
+} from './calendar.js';
 import { config } from './config.js';
 import { createTenant, getEvents, getTenant, getTenantByPhone, logMessage, updateTenant } from './db.js';
 import { reply } from './dispatcher.js';
-import { parseDateTime } from './nlu/datetime.js';
+import { canWrite } from './google.js';
+import { normalize, parseDateTime } from './nlu/datetime.js';
+import { parseEventText } from './nlu/event.js';
 import { parseIntent } from './nlu/intents.js';
 import { analyzeDay, dayAgendaText, freeSlots } from './rules/analysis.js';
 import { ensureSystemRules } from './rules/scripts.js';
@@ -20,6 +26,7 @@ export const HELP = [
   `🤖 *${P}* — o que eu entendo:`,
   '',
   '📅 *Agenda*: "agenda", "o que tenho amanhã?", "agenda sexta", "próximo compromisso", "livre", "semana"',
+  ...(config.calendarWrite ? ['✍️ *Mexer na agenda*: "marcar reunião com João amanhã 15h", "agendar dentista sexta 10h por 40 min", "remarcar dentista pra 16h", "desmarcar reunião com João", "desfazer"'] : []),
   '📝 *Tarefas*: "tarefa ligar pro contador amanhã 10h", "anota: comprar embalagens", "tarefas", "feito 2", "adiar 1 para segunda", "apagar 3"',
   '⚙️ *Ajustes*: "resumo às 7h", "prévia às 21h", "lembrete 15 min antes", "não perturbe das 22h às 7h", "pausar", "retomar"',
   '🔐 *Conta*: "painel", "assinatura", "conectar"',
@@ -32,6 +39,13 @@ function nameFrom(text) {
 }
 
 const connectLink = (t) => magicLink(t.id, '/app/conectar-google');
+const accessNote = () => (config.calendarWrite ? 'eu só mexo nela quando você pedir e confirmar' : 'é só leitura, eu não altero nada');
+
+const PENDING_MIN = 15;   // confirmações de agenda valem 15 min
+const UNDO_MIN = 30;      // dá para desfazer a última alteração por 30 min
+const YES_NO = [{ id: 'sim', title: '✅ Confirmar' }, { id: 'nao', title: '✖️ Não' }];
+const fresh = (iso, now, min) => Boolean(iso) && now - new Date(iso) < min * 60e3;
+const reviveDraft = (d) => ({ ...d, start: new Date(d.start), end: new Date(d.end) });
 
 const blockedText = (t, now) => {
   const why = t.status === 'canceled' ? 'Sua assinatura foi cancelada'
@@ -44,7 +58,7 @@ const blockedText = (t, now) => {
  * Lógica pura da conversa (usa o banco, mas não envia nada).
  * Retorna { messages: [{text, buttons?}], intent, tenant }.
  */
-export function respond(tenant, text, now = new Date(), { type = 'text' } = {}) {
+export async function respond(tenant, text, now = new Date(), { type = 'text' } = {}) {
   let t = tenant;
   const ctx = { ...t.ctx };
   const out = [];
@@ -69,7 +83,7 @@ export function respond(tenant, text, now = new Date(), { type = 'text' } = {}) 
     }
     delete ctx.suggestedName;
     save({ name, onboarding: 'connect_google' });
-    say(`Prazer, ${first(name)}! 😊\n\nAgora conecte sua Google Agenda — leva 30 segundos e é só leitura, eu não altero nada:\n${connectLink(t)}\n\nEnquanto isso, já pode me mandar tarefas. Exemplo:\n"tarefa ligar pro contador amanhã 10h"`);
+    say(`Prazer, ${first(name)}! 😊\n\nAgora conecte sua Google Agenda — leva 30 segundos e ${accessNote()}:\n${connectLink(t)}\n\nEnquanto isso, já pode me mandar tarefas. Exemplo:\n"tarefa ligar pro contador amanhã 10h"`);
     return { messages: out, intent: 'cadastro_nome', tenant: t };
   }
 
@@ -83,10 +97,162 @@ export function respond(tenant, text, now = new Date(), { type = 'text' } = {}) 
   const events = getEvents(t.id);
   const needCalendar = () => {
     if (t.hasGoogle) return false;
-    say(`🔗 Sua Google Agenda ainda não está conectada. Conecte aqui (só leitura):\n${connectLink(t)}`);
+    say(`🔗 Sua Google Agenda ainda não está conectada. Conecte aqui (${accessNote()}):\n${connectLink(t)}`);
     return true;
   };
   const lastNum = () => ctx.lastTaskNum ?? null;
+
+  // ---------------------------------------------------------------- agenda: criar / remarcar / cancelar
+  const needWrite = () => {
+    if (needCalendar()) return true;
+    if (!config.calendarWrite) { say('Por enquanto eu só leio sua agenda. Para marcar ou mudar um compromisso, use o Google Agenda. 🙏'); return true; }
+    if (canWrite(t)) return false;
+    say(`✍️ Para eu marcar e remarcar compromissos, preciso da sua permissão para editar a agenda (hoje tenho só leitura).\n\nToque para autorizar, leva 30 segundos:\n${connectLink(t)}\n\nEu só altero algo quando você pedir e confirmar.`);
+    return true;
+  };
+  const ask = (pending, txt, buttons) => { ctx.pending = { ...pending, at: now.toISOString() }; say(txt, buttons ? { buttons } : {}); save(); };
+
+  const proposeCreate = (draft) => {
+    if (!draft.title || draft.title.length < 2) {
+      ask({ type: 'cal_need_title', draft: { ...draft, start: draft.start?.toISOString(), end: draft.end?.toISOString() } }, 'Qual é o compromisso? Ex.: "reunião com João".');
+      return;
+    }
+    if (!draft.start || (!draft.hasTime && !draft.allDay)) {
+      ask({ type: 'cal_need_time', title: draft.title, location: draft.location, online: draft.online, durationMin: draft.durationMin, day: draft.start?.toISOString() || null },
+        `Que ${draft.start ? 'horas' : 'dia e horário'}${draft.start ? ` (${fmtDay(draft.start)})` : ''} para *${draft.title}*? Ex.: "${draft.start ? '15h' : 'amanhã 15h'}" ou "o dia todo".`);
+      return;
+    }
+    if (draft.end <= now) { say('⏰ Esse horário já passou. Me diga outro dia ou horário.'); return; }
+    if (draft.start > addDays(startOfDay(now), 366)) { say('Consigo marcar até 1 ano à frente. 🙂'); return; }
+    const clash = draft.allDay ? [] : conflictsFor(events, draft.start, draft.end);
+    ask({ type: 'cal_confirm', action: 'create', draft: { ...draft, start: draft.start.toISOString(), end: draft.end.toISOString() } },
+      `📅 Vou marcar na sua agenda:\n${eventSummary(draft, now)}${conflictText(clash)}\n\nConfirma?`, YES_NO);
+  };
+
+  const proposeMove = (ev, target) => {
+    const why = cannotEdit(ev);
+    if (why) { say(`🔒 ${why}`); return; }
+    if (!target?.found) {
+      ask({ type: 'cal_need_target', eventId: ev.id }, `Para quando eu passo *${ev.title}* (${whenText(ev, now)})? Ex.: "sexta 10h" ou "16h".`);
+      return;
+    }
+    const nt = newTimes(ev, target);
+    if (nt.start.getTime() === ev.start.getTime()) { say(`*${ev.title}* já está ${whenText(ev, now)}. 🙂`); return; }
+    if (nt.end <= now) { say('⏰ Esse horário já passou. Me diga outro dia ou horário.'); return; }
+    const clash = nt.allDay ? [] : conflictsFor(events, nt.start, nt.end, ev.id);
+    ask({ type: 'cal_confirm', action: 'move', eventId: ev.id, start: nt.start.toISOString(), end: nt.end.toISOString() },
+      `🔁 Remarcar *${ev.title}*\nDe: ${whenText(ev, now)}\nPara: ${whenText({ ...ev, ...nt }, now)}${guestsText(ev, 'do novo horário')}${recurringText(ev)}${conflictText(clash)}\n\nConfirma?`, YES_NO);
+  };
+
+  const proposeCancel = (ev) => {
+    const why = cannotEdit(ev);
+    if (why) { say(`🔒 ${why}`); return; }
+    ask({ type: 'cal_confirm', action: 'cancel', eventId: ev.id },
+      `🗑️ Cancelar este compromisso?\n${eventSummary(ev, now)}${guestsText(ev, 'do cancelamento')}${recurringText(ev)}\n\nConfirma?`, YES_NO);
+  };
+
+  /** Acha o compromisso citado; se houver vários, pergunta qual. */
+  const withEvent = (action, { query, day, at }, extra, go) => {
+    let found = findEvents(editableEvents(t.id, now), query, { day, now });
+    if (at && found.some((e) => e.start.getTime() === at.getTime())) found = found.filter((e) => e.start.getTime() === at.getTime());
+    if (!found.length) {
+      const label = query ? `"${query}"` : 'esse compromisso';
+      say(`🔎 Não achei ${label} na sua agenda${day ? ` de ${fmtDay(day)}` : ' dos próximos dias'}.\n\nResponda AGENDA para ver seus compromissos, ou diga o nome como está na agenda.`);
+      return;
+    }
+    if (found.length === 1) { go(found[0]); return; }
+    const list = found.slice(0, 5);
+    ask({ type: 'cal_pick', action, ids: list.map((e) => e.id), ...extra },
+      [`Achei ${found.length > 5 ? 'vários' : list.length} compromissos. Qual deles?`, ...list.map((e, i) => pickLine(e, i, now)), '', 'Responda com o número.'].join('\n'));
+  };
+
+  const draftFrom = (txt) => {
+    const ev = parseEventText(txt, now, { defaultMin: Number(s.defaultEventMin) || 60 });
+    return { title: ev.title, start: ev.start, end: ev.end, allDay: ev.allDay, hasTime: ev.hasTime, location: ev.location, online: ev.online, durationMin: ev.durationMin };
+  };
+
+  async function executePending(pd) {
+    const findCached = (id) => getEvents(t.id).find((e) => e.id === id);
+    let done;
+    try {
+      if (pd.action === 'create') {
+        const e = await doCreate(t, reviveDraft(pd.draft));
+        done = { action: 'create', before: null, after: e };
+        say(`✅ Marcado!\n${eventSummary(e, now)}\n\nErrou algo? Responda DESFAZER.`);
+      } else {
+        const ev = findCached(pd.eventId);
+        if (!ev) { say('🤔 Esse compromisso não está mais na sua agenda. Responda AGENDA para conferir.'); return; }
+        if (pd.action === 'move') {
+          const e = await doMove(t, ev, new Date(pd.start), new Date(pd.end));
+          done = { action: 'move', before: ev, after: e };
+          say(`✅ Remarcado: *${e.title}* agora é ${whenText(e, now)}.${guestsText(ev, 'do novo horário')}\n\nErrou algo? Responda DESFAZER.`);
+        } else {
+          await doCancel(t, ev);
+          done = { action: 'cancel', before: ev, after: null };
+          say(`🗑️ Cancelado: *${ev.title}* (${whenText(ev, now)}).${guestsText(ev, 'do cancelamento')}\n\nErrou? Responda DESFAZER.`);
+        }
+      }
+      ctx.lastCal = { ...done, at: now.toISOString() };
+    } catch (err) {
+      if (err.kind === 'auth' || err.kind === 'forbidden') say(`⚠️ ${err.message}\nAutorize de novo aqui:\n${connectLink(t)}`);
+      else say(`⚠️ ${err.message}`);
+    }
+  }
+
+  // Respostas a perguntas pendentes de agenda (escolha por número, horário que faltou, título que faltou)
+  if (ctx.pending?.type?.startsWith('cal_') && !fresh(ctx.pending.at, now, PENDING_MIN)) { delete ctx.pending; save(); }
+  const pend = ctx.pending;
+  if (pend?.type === 'cal_pick') {
+    const pick = normalize(String(text)).trim().match(/^(?:o|a|opcao|numero|n[o.]?)?\s*(\d{1,2})[º°o]?$/);
+    if (pick) {
+      const ev = getEvents(t.id).find((e) => e.id === pend.ids[Number(pick[1]) - 1]);
+      delete ctx.pending;
+      if (!ev) { say(`Responda um número de 1 a ${pend.ids.length}.`); ctx.pending = pend; save(); return { messages: out, intent: 'agenda_escolha', tenant: t }; }
+      if (pend.action === 'move') proposeMove(ev, pend.target ? parseDateTime(pend.target, now) : null);
+      else proposeCancel(ev);
+      save();
+      return { messages: out, intent: 'agenda_escolha', tenant: t };
+    }
+  }
+  if (['cal_need_time', 'cal_need_target', 'cal_need_title'].includes(pend?.type) && !['negar', 'ajuda', 'confirmar'].includes(p.intent)) {
+    if (pend.type === 'cal_need_title' && p.intent === 'nao_entendido') {
+      delete ctx.pending;
+      const d = reviveDraft(pend.draft);
+      proposeCreate({ ...d, start: pend.draft.start ? d.start : null, end: pend.draft.end ? d.end : null, title: String(text).trim().replace(/^./, (c) => c.toUpperCase()) });
+      save();
+      return { messages: out, intent: 'marcar_evento', tenant: t };
+    }
+    const w = parseDateTime(text, now);
+    const allDay = /\bdia (todo|inteiro)\b/.test(normalize(String(text)));
+    if (w.found || allDay) {
+      delete ctx.pending;
+      if (pend.type === 'cal_need_target') {
+        const ev = getEvents(t.id).find((e) => e.id === pend.eventId);
+        if (ev) proposeMove(ev, w); else say('🤔 Esse compromisso não está mais na sua agenda.');
+      } else {
+        // Ex.: pediu "marcar dentista sexta" → perguntei a hora → respondeu "10h por 40 min"
+        const ev = parseEventText(text, now, { defaultMin: Number(s.defaultEventMin) || 60 });
+        const isAllDay = allDay || ev.allDay;
+        let start = ev.start || w.date;
+        if (pend.day && !w.hasDay) {
+          const time = start;
+          start = new Date(pend.day);
+          if (time && !isAllDay) start.setHours(time.getHours(), time.getMinutes(), 0, 0);
+        }
+        if (!start) { ask(pend, `Qual dia? Ex.: "amanhã" ou "sexta o dia todo".`); return { messages: out, intent: 'marcar_evento', tenant: t }; }
+        if (isAllDay) start = startOfDay(start);
+        const durMin = ev.durationMin ?? pend.durationMin ?? (ev.end && ev.start ? (ev.end - ev.start) / 60e3 : Number(s.defaultEventMin) || 60);
+        proposeCreate({
+          title: pend.title, location: ev.location || pend.location, online: ev.online || pend.online, durationMin: durMin,
+          start, end: isAllDay ? addDays(start, 1) : addMinutes(start, durMin), allDay: isAllDay, hasTime: !isAllDay && w.hasTime,
+        });
+      }
+      save();
+      return { messages: out, intent: pend.type === 'cal_need_target' ? 'remarcar_evento' : 'marcar_evento', tenant: t };
+    }
+  }
+  // Qualquer outro assunto descarta a pergunta de agenda em aberto (evita confirmar algo antigo sem querer).
+  if (ctx.pending?.type?.startsWith('cal_') && !['confirmar', 'negar'].includes(p.intent)) { delete ctx.pending; save(); }
 
   switch (p.intent) {
     case 'saudacao': {
@@ -140,6 +306,33 @@ export function respond(tenant, text, now = new Date(), { type = 'text' } = {}) 
         lines.push(`• ${fmtDay(day)}: ${a.timed.length} compromisso(s), ${fmtDuration(a.busyMin)} ${flags}`.trimEnd());
       }
       say(lines.join('\n'));
+      break;
+    }
+
+    // ---------------------------------------------------------- mexer na agenda
+    case 'marcar_evento': {
+      if (needWrite()) break;
+      if (!p.text) { say('O que eu marco? Ex.: "marcar reunião com João amanhã 15h" ou "agendar dentista sexta 10h por 40 min".'); break; }
+      proposeCreate(draftFrom(p.text));
+      break;
+    }
+    case 'remarcar_evento': {
+      if (needWrite()) break;
+      const target = p.target ? parseDateTime(p.target, now) : null;
+      withEvent('move', p, { target: p.target }, (ev) => proposeMove(ev, target));
+      break;
+    }
+    case 'cancelar_evento': {
+      if (needWrite()) break;
+      if (!p.query && !p.day) { say('Qual compromisso eu desmarco? Ex.: "desmarcar reunião com João" ou "cancelar dentista de sexta".'); break; }
+      withEvent('cancel', p, {}, proposeCancel);
+      break;
+    }
+    case 'desfazer': {
+      if (!ctx.lastCal || !fresh(ctx.lastCal.at, now, UNDO_MIN)) { say('Não tenho nenhuma alteração recente na agenda para desfazer.'); delete ctx.lastCal; save(); break; }
+      if (needWrite()) break;
+      try { say(await doUndo(t, ctx.lastCal, now)); delete ctx.lastCal; } catch (err) { say(`⚠️ ${err.message}`); }
+      save();
       break;
     }
 
@@ -238,7 +431,8 @@ export function respond(tenant, text, now = new Date(), { type = 'text' } = {}) 
     case 'retomar': save({ settings: { ...s, paused: false } }); say('▶️ Avisos retomados!'); break;
     case 'painel': say(`🔐 Seu link de acesso ao painel (vale 15 min, uso único):\n${magicLink(t.id, '/app')}`); break;
     case 'conectar_google':
-      say(t.hasGoogle ? `✅ Sua agenda já está conectada (${t.googleEmail || 'Google'}).` : `🔗 Conecte sua Google Agenda (só leitura):\n${connectLink(t)}`);
+      if (t.hasGoogle && config.calendarWrite && !canWrite(t)) say(`✅ Sua agenda está conectada (${t.googleEmail || 'Google'}), só para leitura.\n\nPara eu também marcar e remarcar compromissos, autorize aqui:\n${connectLink(t)}`);
+      else say(t.hasGoogle ? `✅ Sua agenda já está conectada (${t.googleEmail || 'Google'}).` : `🔗 Conecte sua Google Agenda (${accessNote()}):\n${connectLink(t)}`);
       break;
     case 'assinatura': {
       const days = trialDaysLeft(t, now);
@@ -249,7 +443,16 @@ export function respond(tenant, text, now = new Date(), { type = 'text' } = {}) 
 
     // ---------------------------------------------------------- confirmações e fallback
     case 'confirmar': {
-      if (ctx.pending?.type === 'task_from_text') {
+      if (ctx.pending?.type === 'cal_confirm') {
+        const pd = ctx.pending;
+        delete ctx.pending;
+        save();
+        if (needWrite()) break;
+        await executePending(pd);
+        save();
+      } else if (ctx.pending?.type?.startsWith('cal_')) {
+        say('Ainda falta uma informação: responda a pergunta acima, ou NÃO para deixar pra lá.');
+      } else if (ctx.pending?.type === 'task_from_text') {
         const parsed = parseDateTime(ctx.pending.text, now);
         const task = createTask(t.id, { title: parsed.rest || ctx.pending.text, dueAt: parsed.date, hasTime: parsed.hasTime });
         ctx.lastTaskNum = task.num;
@@ -259,7 +462,12 @@ export function respond(tenant, text, now = new Date(), { type = 'text' } = {}) 
       } else say('👍');
       break;
     }
-    case 'negar': delete ctx.pending; save(); say('Ok, deixei pra lá. 👍'); break;
+    case 'negar': {
+      const wasCal = ctx.pending?.type?.startsWith('cal_');
+      delete ctx.pending; save();
+      say(wasCal ? 'Ok, não mexi na agenda. 👍' : 'Ok, deixei pra lá. 👍');
+      break;
+    }
     default: {
       const raw = String(text).trim();
       const words = raw.split(/\s+/).length;
@@ -275,7 +483,7 @@ export function respond(tenant, text, now = new Date(), { type = 'text' } = {}) 
   }
 
   // Lembrete suave para conectar a agenda (no máximo 1x por dia)
-  if (!t.hasGoogle && t.onboarding !== 'ask_name' && ctx.nudgedOn !== dayKey(now) && !['conectar_google', 'agenda', 'proximo', 'livre', 'semana'].includes(p.intent)) {
+  if (!t.hasGoogle && t.onboarding !== 'ask_name' && ctx.nudgedOn !== dayKey(now) && !['conectar_google', 'agenda', 'proximo', 'livre', 'semana', 'marcar_evento', 'remarcar_evento', 'cancelar_evento', 'desfazer'].includes(p.intent)) {
     ctx.nudgedOn = dayKey(now);
     save();
     out[out.length - 1].text += '\n\n🔗 Falta conectar sua Google Agenda — responda CONECTAR.';
@@ -309,7 +517,7 @@ export async function handleIncoming({ from, text = '', type = 'text', profileNa
     intent = 'boas_vindas';
   } else {
     tenant = updateTenant(tenant.id, { lastInboundAt: now.toISOString() });
-    const r = respond(tenant, text, now, { type });
+    const r = await respond(tenant, text, now, { type });
     ({ messages, intent } = r);
     tenant = getTenant(tenant.id);
     logMessage({ tenantId: tenant.id, dir: 'in', text, intent });
