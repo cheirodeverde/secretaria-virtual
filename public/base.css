@@ -39,3 +39,6 @@ label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
 .switch input:checked + span::after { transform: translateX(19px); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chips button { padding: 4px 9px; font-size: 12px; border-radius: 8px; font-weight: 500; font-family: ui-monospace, monospace; }
+
+/* "hidden" sempre esconde, mesmo em elementos com display próprio (flex, grid, botões) */
+[hidden] { display: none !important; }

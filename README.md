@@ -1,4 +1,4 @@
-# 📱 Secretária de Bolso v0.4: MVP SaaS
+# 📱 Secretária de Bolso v0.5: MVP SaaS
 
 A Secretária de Bolso é uma secretária para pequenos empresários que funciona dentro do WhatsApp. Ela é vendida por assinatura mensal.
 
@@ -9,7 +9,7 @@ O que ela faz:
 - deixa o cliente **configurar regras e textos** das mensagens;
 - **conversa** em português simples.
 
-O WhatsApp é conectado pela **[Evolution API](https://github.com/EvolutionAPI/evolution-api)**: você lê um QR Code no painel `/admin` com o celular do número da Secretária, e pronto.
+O WhatsApp é conectado pela **[Evolution API](https://github.com/EvolutionAPI/evolution-api)**. Você cadastra **quantos números quiser** no painel `/admin` → **Números da Secretária** (URL, chave e instância de cada um) e conecta cada um lendo o QR Code com o celular.
 
 ## Ver funcionando agora, direto do GitHub
 
@@ -25,7 +25,7 @@ O WhatsApp é conectado pela **[Evolution API](https://github.com/EvolutionAPI/e
 
 ```bash
 npm install                # Node 22.13+
-npm test                   # 25 testes: datas, intenções, compromissos, Evolution API, motor de regras e conversas completas
+npm test                   # 30 testes: datas, intenções, compromissos, Evolution API, motor de regras e conversas completas
 npm run demo:conversa      # imprime no terminal uma conversa real com a Secretária
 npm run demo               # servidor com agenda fictícia e WhatsApp simulado
 ```
@@ -49,6 +49,7 @@ Com o `npm run demo` rodando, abra **http://localhost:3000/admin** (usuário qua
 | **Painel (PWA)** | Telas Hoje, Tarefas, Regras, Ajustes e Conta. O acesso é por link mágico enviado no WhatsApp (comando PAINEL), sem senha. |
 | **Assinatura** | Pelo Asaas: o cliente informa CPF/CNPJ, recebe o link de pagamento e paga com Pix, cartão ou boleto. O webhook ativa a conta. Se atrasar, os avisos continuam por mais 3 dias; depois disso param e as respostas oferecem o link para pagar. |
 | **Admin** | Conexão do WhatsApp (QR Code, status, mensagem de teste, desconectar), clientes, situação, mensagens do mês, % de frases não entendidas e o simulador. |
+| **Vários números** | Cada número da Secretária é uma instância da Evolution cadastrada no `/admin` (as chaves ficam criptografadas no banco e nunca voltam para a tela; ao salvar, o sistema testa a URL e a chave). Cada cliente fica ligado ao número para o qual escreveu: respostas e avisos saem por ele. Um número é o **padrão** (link do site e clientes sem número). Dá para trocar o número de um cliente, desligar, editar e remover números. Use para dividir clientes entre chips, dar um número exclusivo a um cliente ou ter um reserva. |
 | **WhatsApp (Evolution API)** | Texto em tudo (Evolution não tem janela de 24h nem modelos pagos). Botões viram instruções em texto ("Responda SIM ou NÃO"), que funcionam em qualquer celular. Ignora grupos, status e mensagens enviadas pelo próprio número. Mensagens do mesmo cliente são processadas na ordem. O webhook é protegido por token e configurado sozinho pelo sistema. |
 
 ## Implantar de verdade
@@ -68,9 +69,9 @@ Com o `npm run demo` rodando, abra **http://localhost:3000/admin** (usuário qua
    - **Railway:** crie um projeto com dois serviços: (a) a Evolution API pelo template "Evolution API" do Railway e (b) este repositório (`npm start`) com um **volume montado em `/app/data`** e `DB_FILE=/app/data/secretaria.db`. No serviço da Secretária, preencha `EVOLUTION_API_URL` (URL da Evolution) e `EVOLUTION_API_KEY` (a `AUTHENTICATION_API_KEY` dela) e `BASE_URL` (URL pública da Secretária).
    - ⚠️ **Vercel/Netlify/Cloudflare não servem**: o sistema precisa ficar ligado (agendador a cada minuto) e de disco para o banco.
    - **Já tem uma Evolution?** Não precisa subir outra: aponte `EVOLUTION_API_URL` para ela. Para não deixar a chave da Evolution no servidor da Secretária, use a ponte no Cloudflare: [`cloudflare/evolution-proxy`](cloudflare/evolution-proxy/README.md).
-4. **Conectar o WhatsApp:** abra `https://SEU-DOMINIO/admin` → **Conectar WhatsApp (QR Code)** → no celular da Secretária: WhatsApp → Aparelhos conectados → Conectar aparelho → leia o QR. O sistema cria a instância e configura o webhook sozinho. Use **Enviar mensagem de teste** para conferir.
+4. **Cadastrar e conectar os números:** abra `https://SEU-DOMINIO/admin` → **Números da Secretária** → **+ Adicionar número** → preencha nome, URL da Evolution (ou do Worker), chave e instância (ex.: `secretaria`) → **Salvar e testar** → **QR Code** → no celular: WhatsApp → Aparelhos conectados → Conectar aparelho → leia o QR. O sistema cria a instância e configura o webhook (`/webhook/evolution/<id>`) sozinho. Use **Testar envio** para conferir. Repita para cada número.
 5. **Asaas:** gere a API key. Crie o webhook `https://SEU-DOMINIO/billing/webhook` com um authToken e coloque esse mesmo valor em `ASAAS_WEBHOOK_TOKEN`. Assine os eventos `PAYMENT_CONFIRMED`, `PAYMENT_RECEIVED`, `PAYMENT_OVERDUE`, `SUBSCRIPTION_DELETED` e `SUBSCRIPTION_INACTIVATED`.
-6. Preencha `WHATSAPP_DISPLAY_NUMBER` com o número da Secretária (é o link "Começar no WhatsApp" do site).
+6. No número padrão, preencha **Número público** (é o link "Começar no WhatsApp" do site).
 7. Antes de publicar, revise `public/privacidade.html` e `public/termos.html` com um advogado.
 
 ## Estrutura
@@ -87,6 +88,7 @@ src/
   scheduler.js        a cada minuto: sincroniza, calcula e envia
   dispatcher.js       único ponto de saída: anti-duplicidade, não perturbe, pausa, conta
   whatsapp.js         Evolution API (envio, QR Code, webhook) e, opcional, API oficial da Meta
+  connections.js      números da Secretária (cadastro, chave criptografada, número de cada cliente)
   nlu/event.js        pedidos de compromisso (início, fim, duração, local, Meet, dia todo)
   calendar.js         achar o compromisso citado, conflitos, criar/remarcar/cancelar, histórico e desfazer
   google.js           OAuth por cliente, tokens criptografados (AES-256-GCM), leitura e escrita na agenda

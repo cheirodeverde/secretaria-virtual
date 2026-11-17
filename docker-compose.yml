@@ -12,8 +12,9 @@ services:
       BASE_URL: https://${DOMAIN}
       WHATSAPP_PROVIDER: evolution
       EVOLUTION_API_URL: http://evolution:8080
-      # a Evolution entrega as mensagens pela rede interna (não sai para a internet)
+      # a Evolution entrega as mensagens pela rede interna (não sai para a internet); o sistema acrescenta /<id do número>
       EVOLUTION_WEBHOOK_URL: http://app:3000/webhook/evolution
+      # 1º número importado para o cadastro do /admin (outros números: cadastre no /admin com URL http://evolution:8080)
       DB_FILE: /app/data/secretaria.db
     volumes:
       - app_data:/app/data

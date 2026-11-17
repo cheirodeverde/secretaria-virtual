@@ -27,22 +27,26 @@ const fake = http.createServer((req, res) => {
 });
 await new Promise((r) => fake.listen(0, '127.0.0.1', r));
 
-process.env.EVOLUTION_API_URL = `http://127.0.0.1:${fake.address().port}/`;
-process.env.EVOLUTION_API_KEY = 'CHAVE-GLOBAL';
-process.env.EVOLUTION_WEBHOOK_TOKEN = 'segredo-do-webhook';
 process.env.WHATSAPP_DRY_RUN = 'false';
 process.env.BASE_URL = 'https://secretaria.exemplo.com';
 
 const { config } = await import('../src/config.js');
+const { openDb } = await import('../src/db.js');
+const { createConnection, getConnection } = await import('../src/connections.js');
 const W = await import('../src/whatsapp.js');
+openDb(':memory:');
+
+const created = createConnection({ name: 'Principal', apiUrl: `http://127.0.0.1:${fake.address().port}/`, apiKey: 'CHAVE-GLOBAL', instance: 'secretaria' }, { webhookSecret: 'segredo-do-webhook' });
+const C = getConnection(created.id, { withKey: true });
 
 test.after(() => fake.close());
 
-test('configuração: Evolution é o padrão e sai do modo simulação com URL + chave', () => {
+test('configuração: Evolution é o padrão e sai do modo simulação quando há um número ativo', () => {
   assert.equal(config.whatsapp.provider, 'evolution');
-  assert.equal(config.whatsapp.dryRun, false);
-  assert.equal(config.whatsapp.evolution.url, process.env.EVOLUTION_API_URL.replace(/\/$/, ''));
-  assert.equal(W.evolutionWebhookUrl(), 'https://secretaria.exemplo.com/webhook/evolution');
+  assert.equal(W.isSimulation(), false);
+  assert.equal(C.apiUrl, `http://127.0.0.1:${fake.address().port}`, 'barra final removida');
+  assert.equal(C.isDefault, true, 'o primeiro número vira o padrão');
+  assert.equal(W.evolutionWebhookUrl(C), `https://secretaria.exemplo.com/webhook/evolution/${C.id}`);
 });
 
 test('envio: texto pela rota sendText com apikey; botões viram instrução em texto', async () => {
@@ -50,7 +54,7 @@ test('envio: texto pela rota sendText com apikey; botões viram instrução em t
   const r = await W.deliver({ phone: '5511988887777' }, {
     text: '📅 Vou marcar: Dentista\n\nConfirma?', buttons: [{ id: 'sim', title: '✅ Confirmar' }, { id: 'nao', title: '✖️ Não' }],
   });
-  assert.equal(r.via, 'texto');
+  assert.equal(r.via, 'texto:Principal', 'registra por qual número saiu');
   const c = calls.at(-1);
   assert.equal(c.method, 'POST');
   assert.equal(c.url, '/message/sendText/secretaria');
@@ -68,34 +72,31 @@ test('envio: texto pela rota sendText com apikey; botões viram instrução em t
 
 test('conexão: cria a instância, aponta o webhook com o token e devolve o QR Code', async () => {
   calls.length = 0;
-  assert.equal(await W.evolutionState(), 'not_found');
-  const r = await W.evolutionConnect();
+  assert.equal(await W.evolutionState(C), 'not_found');
+  const r = await W.evolutionConnect(C);
   assert.equal(r.state, 'connecting');
   assert.equal(r.qr, 'data:image/png;base64,QRDATA');
   const create = calls.find((c) => c.url === '/instance/create');
   assert.equal(create.body.instanceName, 'secretaria');
   assert.equal(create.body.integration, 'WHATSAPP-BAILEYS');
   const hook = calls.find((c) => c.url === '/webhook/set/secretaria').body.webhook;
-  assert.equal(hook.url, 'https://secretaria.exemplo.com/webhook/evolution');
+  assert.equal(hook.url, `https://secretaria.exemplo.com/webhook/evolution/${C.id}`);
   assert.deepEqual(hook.headers, { 'x-webhook-token': 'segredo-do-webhook' });
   assert.deepEqual(hook.events, ['MESSAGES_UPSERT', 'CONNECTION_UPDATE']);
   assert.equal(hook.enabled, true);
 
   // Segunda vez: instância já existe → não cria de novo
   calls.length = 0;
-  await W.evolutionConnect();
+  await W.evolutionConnect(C);
   assert.equal(calls.some((c) => c.url === '/instance/create'), false);
 
   state.conn = 'open';
-  assert.equal(await W.evolutionState(), 'open');
-  assert.equal((await W.evolutionInfo()).number, '5511900001111');
+  assert.equal(await W.evolutionState(C), 'open');
+  assert.equal((await W.evolutionInfo(C)).number, '5511900001111');
 });
 
 test('erros da Evolution chegam com a mensagem dela', async () => {
-  const saved = config.whatsapp.evolution.url;
-  config.whatsapp.evolution.url = 'http://127.0.0.1:1'; // porta fechada
-  await assert.rejects(() => W.evolutionState(), /Não consegui falar com a Evolution API/);
-  config.whatsapp.evolution.url = saved;
+  await assert.rejects(() => W.evolutionState({ ...C, apiUrl: 'http://127.0.0.1:1' }), /Não consegui falar com a Evolution API/); // porta fechada
 });
 
 test('webhook: extrai texto, resolve @lid e ignora o que não é conversa com cliente', () => {
@@ -122,8 +123,9 @@ test('webhook: extrai texto, resolve @lid e ignora o que não é conversa com cl
 
 test('webhook: só aceita com o token certo', () => {
   const req = (h = {}, q = {}) => ({ get: (k) => h[k.toLowerCase()], query: q });
-  assert.equal(W.validEvolutionToken(req({ 'x-webhook-token': 'segredo-do-webhook' })), true);
-  assert.equal(W.validEvolutionToken(req({}, { token: 'segredo-do-webhook' })), true);
-  assert.equal(W.validEvolutionToken(req({ 'x-webhook-token': 'errado' })), false);
-  assert.equal(W.validEvolutionToken(req()), false);
+  assert.equal(W.validEvolutionToken(req({ 'x-webhook-token': 'segredo-do-webhook' }), C), true);
+  assert.equal(W.validEvolutionToken(req({}, { token: 'segredo-do-webhook' }), C), true);
+  assert.equal(W.validEvolutionToken(req({ 'x-webhook-token': 'errado' }), C), false);
+  assert.equal(W.validEvolutionToken(req(), C), false);
+  assert.equal(W.validEvolutionToken(req({ 'x-webhook-token': 'segredo-do-webhook' }), null), false);
 });

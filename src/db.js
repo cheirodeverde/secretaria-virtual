@@ -112,6 +112,20 @@ CREATE TABLE IF NOT EXISTS demo_events (
   data TEXT,
   PRIMARY KEY (tenant_id, event_id)
 );
+-- Números da Secretária (instâncias da Evolution API). A chave fica criptografada (AES-256-GCM).
+CREATE TABLE IF NOT EXISTS wa_connections (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  api_url TEXT NOT NULL,
+  api_key TEXT NOT NULL,
+  instance TEXT NOT NULL,
+  display_number TEXT,
+  webhook_secret TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE(api_url, instance)
+);
 CREATE TABLE IF NOT EXISTS billing_events (
   id TEXT PRIMARY KEY,
   received_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -123,7 +137,15 @@ export function openDb(file = config.dbFile) {
   db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA);
+  migrate();
   return db;
+}
+
+/** Migrações simples para bancos criados por versões anteriores. */
+function migrate() {
+  const cols = new Set(db.prepare('PRAGMA table_info(tenants)').all().map((c) => c.name));
+  // Número da Secretária pelo qual o cliente conversa (respostas e avisos saem por ele)
+  if (!cols.has('wa_connection_id')) db.exec('ALTER TABLE tenants ADD COLUMN wa_connection_id INTEGER REFERENCES wa_connections(id) ON DELETE SET NULL');
 }
 
 export const sql = () => db ?? openDb();
@@ -151,6 +173,7 @@ const parseTenant = (r) => r && ({
   lastInboundAt: r.last_inbound_at,
   asaasCustomerId: r.asaas_customer_id,
   asaasSubscriptionId: r.asaas_subscription_id,
+  waConnectionId: r.wa_connection_id ?? null,
   createdAt: r.created_at,
 });
 
@@ -158,7 +181,7 @@ const COLS = {
   name: 'name', email: 'email', cpfCnpj: 'cpf_cnpj', plan: 'plan', status: 'status', trialEndsAt: 'trial_ends_at',
   pastDueSince: 'past_due_since', onboarding: 'onboarding', googleEmail: 'google_email', googleError: 'google_error',
   lastSyncAt: 'last_sync_at', lastInboundAt: 'last_inbound_at', asaasCustomerId: 'asaas_customer_id',
-  asaasSubscriptionId: 'asaas_subscription_id',
+  asaasSubscriptionId: 'asaas_subscription_id', waConnectionId: 'wa_connection_id',
 };
 
 export const getTenant = (id) => parseTenant(sql().prepare('SELECT * FROM tenants WHERE id = ?').get(id));

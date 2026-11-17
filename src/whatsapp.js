@@ -1,25 +1,28 @@
-// WhatsApp: um único número — o da Secretária — conversa com todos os clientes.
+// WhatsApp da Secretária.
 //
-// Provedor padrão: Evolution API (WHATSAPP_PROVIDER=evolution), conectada por QR Code no painel /admin.
-//   • Não há janela de 24h nem modelos: tudo sai como texto.
-//   • Botões não são confiáveis em API não oficial: viram uma linha "Responda SIM ou NÃO".
-// Alternativa: API oficial da Meta (WHATSAPP_PROVIDER=meta), com modelos e janela de 24h.
-// Sem credenciais (ou WHATSAPP_DRY_RUN=true) nada é enviado: as mensagens vão para o simulador do /admin.
+// Provedor padrão: Evolution API (WHATSAPP_PROVIDER=evolution), com VÁRIOS números.
+//   • Cada número é uma instância cadastrada no /admin (tabela wa_connections) e conectada por QR Code.
+//   • Cada cliente conversa por um número: as respostas e os avisos saem pelo número dele.
+//   • Não há janela de 24h nem modelos: tudo sai como texto. Botões viram "Responda SIM ou NÃO".
+// Alternativa: API oficial da Meta (WHATSAPP_PROVIDER=meta), um número só, configurado no .env.
+// Sem nenhum número ativo (ou WHATSAPP_DRY_RUN=true) nada é enviado: as mensagens vão para o simulador do /admin.
 import crypto from 'node:crypto';
 import { config } from './config.js';
+import { connectionForTenant, hasActiveConnection } from './connections.js';
 
 const W = config.whatsapp;
-const E = W.evolution;
 const WINDOW_MS = 24 * 3600e3 - 5 * 60e3; // margem de 5 min
 
 export const isEvolution = () => W.provider !== 'meta';
+const metaConfigured = () => Boolean(W.token && W.phoneNumberId);
+
+/** Modo simulação: nada sai de verdade (simulador do /admin). */
+export const isSimulation = () => W.forceDryRun || (isEvolution() ? !hasActiveConnection() : !metaConfigured());
 
 export const windowOpen = (tenant, now = new Date()) =>
   isEvolution() || (Boolean(tenant?.lastInboundAt) && now - new Date(tenant.lastInboundAt) < WINDOW_MS);
 
-export const whatsappConfigured = () => (isEvolution()
-  ? Boolean(E.url && E.apiKey && E.instance)
-  : Boolean(W.token && W.phoneNumberId));
+export const whatsappConfigured = () => (isEvolution() ? hasActiveConnection() : metaConfigured());
 
 /** Parâmetros de template (Meta) não podem ter quebra de linha, tab ou 4+ espaços seguidos. */
 export const cleanParam = (s) =>
@@ -29,49 +32,54 @@ export const cleanParam = (s) =>
 export const outbox = [];
 
 // ================================================================== Evolution API
+// "conn" = um número cadastrado: { id, apiUrl, apiKey, instance, webhookSecret }
 
-/** Chamada à Evolution API (autenticação pela apikey global). */
-export async function evolution(method, path, body) {
-  if (!E.url || !E.apiKey) throw new Error('Evolution API não configurada (EVOLUTION_API_URL e EVOLUTION_API_KEY).');
+/** Chamada à Evolution API (ou à ponte do Cloudflare) de um número. */
+export async function evolution(conn, method, path, body) {
+  if (!conn?.apiUrl || !conn?.apiKey) throw new Error('Número sem URL ou chave da Evolution.');
   let res;
   try {
-    res = await fetch(`${E.url}${path}`, {
+    res = await fetch(`${conn.apiUrl}${path}`, {
       method,
-      headers: { apikey: E.apiKey, 'Content-Type': 'application/json' },
+      headers: { apikey: conn.apiKey, 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(20000),
     });
   } catch (err) {
-    throw new Error(`Não consegui falar com a Evolution API em ${E.url} (${err.cause?.code || err.message}).`);
+    throw new Error(`Não consegui falar com a Evolution API em ${conn.apiUrl} (${err.cause?.code || err.message}).`);
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const m = data?.response?.message;
-    const err = new Error((Array.isArray(m) ? m.flat().join('; ') : m) || data?.message || data?.error || `Evolution API ${res.status}`);
+    const msg = (Array.isArray(m) ? m.flat().join('; ') : m) || data?.message || data?.error || `Evolution API ${res.status}`;
+    const err = new Error(res.status === 401 || res.status === 403 ? `Chave recusada pela Evolution (${res.status}): ${msg}` : msg);
     err.status = res.status;
     throw err;
   }
   return data;
 }
 
-const inst = () => encodeURIComponent(E.instance);
-export const evolutionWebhookUrl = () => E.webhookUrl || `${config.baseUrl}/webhook/evolution`;
+const inst = (conn) => encodeURIComponent(conn.instance);
 
-function webhookConfig() {
+/** URL que a Evolution chama quando chega mensagem neste número. */
+export const evolutionWebhookUrl = (conn) =>
+  `${(W.evolution.webhookUrl || `${config.baseUrl}/webhook/evolution`).replace(/\/+$/, '')}/${conn.id}`;
+
+function webhookConfig(conn) {
   return {
     enabled: true,
-    url: evolutionWebhookUrl(),
+    url: evolutionWebhookUrl(conn),
     byEvents: false,
     base64: false,
-    headers: E.webhookToken ? { 'x-webhook-token': E.webhookToken } : {},
+    headers: { 'x-webhook-token': conn.webhookSecret },
     events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'],
   };
 }
 
 /** Estado da conexão: 'open' | 'connecting' | 'close' | 'not_found'. */
-export async function evolutionState() {
+export async function evolutionState(conn) {
   try {
-    const d = await evolution('GET', `/instance/connectionState/${inst()}`);
+    const d = await evolution(conn, 'GET', `/instance/connectionState/${inst(conn)}`);
     return d?.instance?.state || d?.state || 'close';
   } catch (err) {
     if (err.status === 404 || err.status === 400) return 'not_found';
@@ -80,42 +88,41 @@ export async function evolutionState() {
 }
 
 /** Número e nome do WhatsApp conectado (quando houver). */
-export async function evolutionInfo() {
+export async function evolutionInfo(conn) {
   try {
-    const d = await evolution('GET', `/instance/fetchInstances?instanceName=${inst()}`);
+    const d = await evolution(conn, 'GET', `/instance/fetchInstances?instanceName=${inst(conn)}`);
     const i = Array.isArray(d) ? d[0] : d?.instance || d;
-    return { number: String(i?.ownerJid || i?.owner || '').split('@')[0] || null, profileName: i?.profileName || null, profilePicUrl: i?.profilePicUrl || null };
+    return { number: String(i?.ownerJid || i?.owner || '').split('@')[0] || null, profileName: i?.profileName || null };
   } catch { return {}; }
 }
 
 /** Cria a instância se não existir e (re)aponta o webhook para este sistema. */
-export async function evolutionEnsure() {
-  if (await evolutionState() === 'not_found') {
-    await evolution('POST', '/instance/create', {
-      instanceName: E.instance, integration: 'WHATSAPP-BAILEYS', qrcode: true, groupsIgnore: true, alwaysOnline: false,
-      readMessages: true, webhook: webhookConfig(),
+export async function evolutionEnsure(conn) {
+  if (await evolutionState(conn) === 'not_found') {
+    await evolution(conn, 'POST', '/instance/create', {
+      instanceName: conn.instance, integration: 'WHATSAPP-BAILEYS', qrcode: true, groupsIgnore: true, alwaysOnline: false,
+      readMessages: true, webhook: webhookConfig(conn),
     });
   }
-  await evolution('POST', `/webhook/set/${inst()}`, { webhook: webhookConfig() });
+  await evolution(conn, 'POST', `/webhook/set/${inst(conn)}`, { webhook: webhookConfig(conn) });
 }
 
 /** Pede o QR Code (ou devolve que já está conectado). */
-export async function evolutionConnect() {
-  await evolutionEnsure();
-  const d = await evolution('GET', `/instance/connect/${inst()}`);
+export async function evolutionConnect(conn) {
+  await evolutionEnsure(conn);
+  const d = await evolution(conn, 'GET', `/instance/connect/${inst(conn)}`);
   if (d?.instance?.state === 'open') return { state: 'open' };
   const b64 = d?.base64 || null;
   return { state: 'connecting', qr: b64 && !b64.startsWith('data:') ? `data:image/png;base64,${b64}` : b64, pairingCode: d?.pairingCode || null };
 }
 
-export const evolutionLogout = () => evolution('DELETE', `/instance/logout/${inst()}`);
+export const evolutionLogout = (conn) => evolution(conn, 'DELETE', `/instance/logout/${inst(conn)}`);
 
-/** Valida o token que a Evolution manda no header (configurado no webhook). */
-export function validEvolutionToken(req) {
-  if (!E.webhookToken) return process.env.NODE_ENV !== 'production';
-  const got = String(req.get('x-webhook-token') || req.query?.token || '');
-  const a = Buffer.from(got);
-  const b = Buffer.from(E.webhookToken);
+/** Valida o token que a Evolution manda no header (configurado no webhook de cada número). */
+export function validEvolutionToken(req, conn) {
+  if (!conn?.webhookSecret) return false;
+  const a = Buffer.from(String(req.get('x-webhook-token') || req.query?.token || ''));
+  const b = Buffer.from(conn.webhookSecret);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
@@ -152,8 +159,8 @@ export const extractConnection = (payload) =>
 
 // ================================================================== envio
 
-async function post(payload) {
-  if (W.dryRun) {
+async function post(payload, conn = null) {
+  if (isSimulation()) {
     outbox.push({ ...payload, at: new Date().toISOString() });
     if (outbox.length > 500) outbox.shift();
     if (process.env.NODE_ENV !== 'test') {
@@ -166,8 +173,9 @@ async function post(payload) {
   }
   if (isEvolution()) {
     if (payload.type !== 'text') throw new Error('Evolution: só texto é suportado');
+    if (!conn) throw new Error('Nenhum número da Secretária ativo para enviar.');
     // delay = "digitando…" por 1 s: deixa o envio com ritmo humano (menos risco de bloqueio)
-    return evolution('POST', `/message/sendText/${inst()}`, { number: payload.to, text: payload.text.body, delay: 1000, linkPreview: true });
+    return evolution(conn, 'POST', `/message/sendText/${inst(conn)}`, { number: payload.to, text: payload.text.body, delay: 1000, linkPreview: true });
   }
   const res = await fetch(`https://graph.facebook.com/${W.apiVersion}/${W.phoneNumberId}/messages`, {
     method: 'POST',
@@ -183,7 +191,7 @@ async function post(payload) {
   return body;
 }
 
-export const sendText = (to, body) => post({ to, type: 'text', text: { preview_url: true, body: String(body).slice(0, 4096) } });
+export const sendText = (to, body, conn = null) => post({ to, type: 'text', text: { preview_url: true, body: String(body).slice(0, 4096) } }, conn);
 
 export const sendTemplate = (to, name, params = []) => post({
   to,
@@ -218,8 +226,9 @@ export const buttonsAsText = (msg) => msg.buttonsFallback
 export async function deliver(tenant, msg, now = new Date()) {
   if (isEvolution()) {
     const text = msg.buttons?.length ? `${msg.text}\n\n${buttonsAsText(msg)}` : msg.text;
-    const r = await sendText(tenant.phone, text);
-    return { via: 'texto', dryRun: Boolean(r?.dryRun) };
+    const conn = isSimulation() ? null : connectionForTenant(tenant);
+    const r = await sendText(tenant.phone, text, conn);
+    return { via: conn ? `texto:${conn.name}` : 'texto', dryRun: Boolean(r?.dryRun) };
   }
   const open = windowOpen(tenant, now);
   try {

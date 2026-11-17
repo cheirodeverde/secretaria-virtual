@@ -25,8 +25,12 @@ import {
 } from './tasks.js';
 import { addDays, addMinutes, atTime, dayKey, fmtDayLong } from './time.js';
 import {
+  createConnection, deleteConnection, findConnectionByInstance, getConnection, importEnvConnection, listConnections, publicConnection,
+  setDefaultConnection, tenantsPerConnection, updateConnection,
+} from './connections.js';
+import {
   evolutionConnect, evolutionEnsure, evolutionInfo, evolutionLogout, evolutionState, evolutionWebhookUrl, extractConnection, extractEvolution,
-  extractMessages, isEvolution, outbox, sendText, validEvolutionToken, validSignature, whatsappConfigured,
+  extractMessages, isEvolution, isSimulation, outbox, sendText, validEvolutionToken, validSignature,
 } from './whatsapp.js';
 import { parseDateTime } from './nlu/datetime.js';
 
@@ -44,7 +48,9 @@ app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody =
 app.get('/', page('index.html'));
 app.get('/health', (_req, res) => res.json({ ok: true }));
 app.get('/api/public', (_req, res) => res.json({
-  productName: config.productName, trialDays: config.trialDays, whatsapp: config.whatsapp.displayNumber, plans: config.plans,
+  productName: config.productName, trialDays: config.trialDays, plans: config.plans,
+  // link "Começar no WhatsApp" do site: número do padrão (cadastrado no /admin) ou WHATSAPP_DISPLAY_NUMBER
+  whatsapp: listConnections().find((c) => c.isDefault && c.enabled)?.displayNumber || config.whatsapp.displayNumber,
 }));
 
 // --- webhook do WhatsApp
@@ -56,8 +62,9 @@ app.get('/webhook', (req, res) => {
 const seen = new Set(); // o provedor pode reenviar o mesmo evento
 const lanes = new Map(); // mensagens do mesmo número são processadas uma de cada vez, na ordem
 function receive(m) {
-  if (!m.id || seen.has(m.id)) return;
-  seen.add(m.id);
+  const key = `${m.connectionId || 'meta'}:${m.id}`;
+  if (!m.id || seen.has(key)) return;
+  seen.add(key);
   if (seen.size > 5000) seen.delete(seen.values().next().value);
   const prev = lanes.get(m.from) || Promise.resolve();
   const next = prev.then(() => handleIncoming(m)).catch((err) => console.error('[webhook]', err));
@@ -65,18 +72,22 @@ function receive(m) {
   next.finally(() => { if (lanes.get(m.from) === next) lanes.delete(m.from); });
 }
 
-// --- webhook da Evolution API (provedor padrão)
-const wa = { state: null, at: null }; // último estado de conexão informado pela Evolution
-app.post('/webhook/evolution', (req, res) => {
-  if (!validEvolutionToken(req)) return res.sendStatus(401);
+// --- webhook da Evolution API: um endereço por número (/webhook/evolution/<id>)
+const waEvents = new Map(); // id do número → último estado informado pela Evolution
+function evolutionHook(conn, req, res) {
+  if (!conn || !validEvolutionToken(req, conn)) return res.sendStatus(401);
   res.sendStatus(200);
+  if (!conn.enabled) return;
   const state = extractConnection(req.body);
   if (state) {
-    if (wa.state === 'open' && state === 'close') console.warn('[whatsapp] o número da Secretária DESCONECTOU — reconecte em /admin');
-    Object.assign(wa, { state, at: new Date().toISOString() });
+    if (waEvents.get(conn.id)?.state === 'open' && state === 'close') console.warn(`[whatsapp] o número "${conn.name}" DESCONECTOU — reconecte em /admin`);
+    waEvents.set(conn.id, { state, at: new Date().toISOString() });
   }
-  for (const m of extractEvolution(req.body)) receive(m);
-});
+  for (const m of extractEvolution(req.body)) receive({ ...m, connectionId: conn.id });
+}
+app.post('/webhook/evolution/:id', (req, res) => evolutionHook(getConnection(Number(req.params.id) || 0), req, res));
+// endereço antigo (v0.4): descobre o número pelo nome da instância
+app.post('/webhook/evolution', (req, res) => evolutionHook(findConnectionByInstance(req.body?.instance), req, res));
 
 // --- webhook da Meta (WHATSAPP_PROVIDER=meta)
 app.post('/webhook', (req, res) => {
@@ -181,7 +192,7 @@ app.get('/api/me', (req, res) => {
       canWrite: canWrite(t), writeAvailable: config.calendarWrite,
     },
     settings: t.settings, limits: plan, plans: config.plans, billingConfigured: billingConfigured(),
-    whatsappDryRun: config.whatsapp.dryRun, demoMode: config.demoMode, queued: queueSize(t.id),
+    whatsappDryRun: isSimulation(), demoMode: config.demoMode, queued: queueSize(t.id),
   });
 });
 
@@ -402,14 +413,14 @@ app.get('/api/admin/tenants', admin, (_req, res) => {
   const cal = Object.fromEntries(calendarStats().map((s) => [s.tenant_id, s.n]));
   res.json({
     costPerMessage: COST_PER_MSG,
-    dryRun: config.whatsapp.dryRun,
-    whatsappConfigured: whatsappConfigured(),
+    dryRun: isSimulation(),
+    connections: listConnections().map((c) => ({ id: c.id, name: c.name, enabled: c.enabled, isDefault: c.isDefault })),
     tenants: listTenants().map((t) => {
       const s = stats[t.id] || {};
       const msgs = (s.sent || 0) + (s.received || 0);
       return {
         id: t.id, name: t.name, phone: t.phone, plan: t.plan, status: t.status, statusLabel: statusLabel(t), access: accessState(t),
-        google: t.hasGoogle, googleWrite: t.hasGoogle && canWrite(t), calendarActions: cal[t.id] || 0,
+        waConnectionId: t.waConnectionId, google: t.hasGoogle, googleWrite: t.hasGoogle && canWrite(t), calendarActions: cal[t.id] || 0,
         createdAt: t.createdAt, sent: s.sent || 0, received: s.received || 0, unknown: s.unknown || 0,
         estCost: +(msgs * COST_PER_MSG).toFixed(2),
       };
@@ -426,42 +437,100 @@ app.post('/api/admin/tenants/:id/status', admin, (req, res) => {
 });
 app.get('/api/admin/tenants/:id/link', admin, (req, res) => res.json({ url: magicLink(Number(req.params.id), '/app') }));
 
-// --- conexão do WhatsApp (Evolution API)
-app.get('/api/admin/whatsapp', admin, asyncH(async (_req, res) => {
-  const base = {
-    provider: isEvolution() ? 'evolution' : 'meta', configured: whatsappConfigured(), dryRun: config.whatsapp.dryRun,
-    instance: config.whatsapp.evolution.instance, apiUrl: config.whatsapp.evolution.url || null, webhookUrl: isEvolution() ? evolutionWebhookUrl() : `${config.baseUrl}/webhook`,
-    webhookProtected: Boolean(config.whatsapp.evolution.webhookToken), lastEvent: wa,
-  };
-  if (!isEvolution() || !whatsappConfigured()) return res.json(base);
+// --- números da Secretária (Evolution API)
+const connOr404 = (req, res) => {
+  const c = getConnection(Number(req.params.id) || 0, { withKey: true });
+  if (!c) res.status(404).json({ error: 'Número não encontrado.' });
+  return c;
+};
+const connOut = (c, clients = tenantsPerConnection()) => ({
+  ...publicConnection(c), clients: clients[c.id] || 0, webhookUrl: evolutionWebhookUrl(c), lastEvent: waEvents.get(c.id) || null,
+});
+
+/** Confere URL + chave antes de salvar (e já aponta o webhook se a instância existir). */
+async function checkConnection(c) {
+  const state = await evolutionState(c); // 401/403 = chave errada; erro de rede = URL errada
+  if (state !== 'not_found') await evolutionEnsure(c).catch(() => {});
+  return state;
+}
+
+app.get('/api/admin/whatsapp', admin, (_req, res) => {
+  const clients = tenantsPerConnection();
+  res.json({
+    provider: isEvolution() ? 'evolution' : 'meta', simulation: isSimulation(), forcedSimulation: config.whatsapp.forceDryRun,
+    metaWebhook: `${config.baseUrl}/webhook`, connections: isEvolution() ? listConnections().map((c) => connOut(c, clients)) : [],
+  });
+});
+app.get('/api/admin/whatsapp/:id/status', admin, asyncH(async (req, res) => {
+  const c = connOr404(req, res); if (!c) return;
+  if (!c.enabled) return res.json({ state: 'disabled' });
   try {
-    const state = await evolutionState();
-    res.json({ ...base, state, ...(state === 'open' ? await evolutionInfo() : {}) });
-  } catch (e) { res.json({ ...base, state: 'erro', error: e.message }); }
+    const state = await evolutionState(c);
+    res.json({ state, ...(state === 'open' ? await evolutionInfo(c) : {}) });
+  } catch (e) { res.json({ state: 'erro', error: e.message }); }
 }));
-app.post('/api/admin/whatsapp/connect', admin, asyncH(async (_req, res) => {
-  if (!isEvolution() || !whatsappConfigured()) return res.status(400).json({ error: 'Configure EVOLUTION_API_URL e EVOLUTION_API_KEY primeiro.' });
-  try { res.json(await evolutionConnect()); } catch (e) { res.status(502).json({ error: e.message }); }
+app.post('/api/admin/whatsapp', admin, asyncH(async (req, res) => {
+  let c;
+  try { c = createConnection(req.body); } catch (e) { return res.status(400).json({ error: e.message }); }
+  const full = getConnection(c.id, { withKey: true });
+  try {
+    const state = await checkConnection(full);
+    res.json({ ...connOut(c), state });
+  } catch (e) {
+    deleteConnection(c.id); // não guarda dados que não funcionam
+    res.status(400).json({ error: e.message });
+  }
 }));
-app.post('/api/admin/whatsapp/webhook', admin, asyncH(async (_req, res) => {
-  if (!isEvolution() || !whatsappConfigured()) return res.status(400).json({ error: 'Evolution API não configurada.' });
-  try { await evolutionEnsure(); res.json({ ok: true, url: evolutionWebhookUrl() }); } catch (e) { res.status(502).json({ error: e.message }); }
+app.put('/api/admin/whatsapp/:id', admin, asyncH(async (req, res) => {
+  const before = connOr404(req, res); if (!before) return;
+  let c;
+  try { c = updateConnection(before.id, req.body); } catch (e) { return res.status(400).json({ error: e.message }); }
+  const full = getConnection(c.id, { withKey: true });
+  if (!full.enabled) return res.json(connOut(c));
+  try { res.json({ ...connOut(c), state: await checkConnection(full) }); } catch (e) { res.status(400).json({ error: `Salvo, mas: ${e.message}` }); }
 }));
-app.post('/api/admin/whatsapp/logout', admin, asyncH(async (_req, res) => {
-  try { await evolutionLogout(); res.json({ ok: true }); } catch (e) { res.status(502).json({ error: e.message }); }
+app.delete('/api/admin/whatsapp/:id', admin, (req, res) => {
+  const c = connOr404(req, res); if (!c) return;
+  deleteConnection(c.id); // não desconecta o celular nem apaga a instância na Evolution
+  res.json({ ok: true });
+});
+app.post('/api/admin/whatsapp/:id/default', admin, (req, res) => {
+  const c = connOr404(req, res); if (!c) return;
+  if (!c.enabled) return res.status(400).json({ error: 'Ative o número antes de torná-lo padrão.' });
+  setDefaultConnection(c.id); res.json({ ok: true });
+});
+app.post('/api/admin/whatsapp/:id/connect', admin, asyncH(async (req, res) => {
+  const c = connOr404(req, res); if (!c) return;
+  try { res.json(await evolutionConnect(c)); } catch (e) { res.status(502).json({ error: e.message }); }
 }));
-app.post('/api/admin/whatsapp/test', admin, asyncH(async (req, res) => {
+app.post('/api/admin/whatsapp/:id/webhook', admin, asyncH(async (req, res) => {
+  const c = connOr404(req, res); if (!c) return;
+  try { await evolutionEnsure(c); res.json({ ok: true, url: evolutionWebhookUrl(c) }); } catch (e) { res.status(502).json({ error: e.message }); }
+}));
+app.post('/api/admin/whatsapp/:id/logout', admin, asyncH(async (req, res) => {
+  const c = connOr404(req, res); if (!c) return;
+  try { await evolutionLogout(c); res.json({ ok: true }); } catch (e) { res.status(502).json({ error: e.message }); }
+}));
+app.post('/api/admin/whatsapp/:id/test', admin, asyncH(async (req, res) => {
+  const c = connOr404(req, res); if (!c) return;
   const to = String(req.body.phone || '').replace(/\D/g, '');
   if (to.length < 10) return res.status(400).json({ error: 'Informe o telefone com DDI e DDD (ex.: 5511999990000)' });
   try {
-    const r = await sendText(to, `✅ Teste da ${config.productName}: o WhatsApp está conectado e enviando mensagens.`);
+    const r = await sendText(to, `✅ Teste da ${config.productName} (${c.name}): este número está conectado e enviando mensagens.`, config.whatsapp.forceDryRun ? null : c);
     res.json({ ok: true, dryRun: Boolean(r?.dryRun) });
   } catch (e) { res.status(502).json({ error: e.message }); }
 }));
+app.post('/api/admin/tenants/:id/connection', admin, (req, res) => {
+  const t = getTenant(Number(req.params.id));
+  if (!t) return res.sendStatus(404);
+  const cid = req.body.connectionId ? Number(req.body.connectionId) : null;
+  if (cid && !getConnection(cid)) return res.status(400).json({ error: 'Número não encontrado.' });
+  res.json({ ok: true, waConnectionId: updateTenant(t.id, { waConnectionId: cid }).waConnectionId });
+});
 
 /** Simulador de WhatsApp (só no modo simulação): manda uma mensagem como se fosse o cliente. */
 app.post('/api/admin/simulate', admin, asyncH(async (req, res) => {
-  if (!config.whatsapp.dryRun) return res.status(400).json({ error: 'Simulador disponível só com WHATSAPP_DRY_RUN=true' });
+  if (!isSimulation()) return res.status(400).json({ error: 'Simulador disponível só no modo simulação (sem número ativo ou WHATSAPP_DRY_RUN=true)' });
   const from = String(req.body.phone || '').replace(/\D/g, '');
   if (from.length < 10) return res.status(400).json({ error: 'Informe o telefone com DDI e DDD' });
   const before = outbox.length;
@@ -488,13 +557,18 @@ app.use((err, _req, res, _next) => {
 if (process.env.NODE_ENV !== 'test') {
   app.listen(config.port, () => {
     console.log(`\n📱 ${config.productName} rodando em ${config.baseUrl}`);
-    console.log(`   Fuso: ${config.timezone} · WhatsApp: ${config.whatsapp.dryRun ? 'SIMULAÇÃO' : isEvolution() ? `Evolution (${config.whatsapp.evolution.url})` : 'Meta'} · Google: ${config.demoMode ? 'DEMO (agenda fictícia)' : googleConfigured() ? 'configurado' : 'não configurado'} · Cobrança: ${billingConfigured() ? 'Asaas' : 'demo'}`);
+    const imported = isEvolution() ? importEnvConnection() : null;
+    if (imported) console.log(`   WhatsApp: número "${imported.name}" importado do .env para o cadastro do /admin`);
+    const active = listConnections().filter((c) => c.enabled);
+    console.log(`   Fuso: ${config.timezone} · WhatsApp: ${isSimulation() ? 'SIMULAÇÃO' : isEvolution() ? `Evolution (${active.length} número(s))` : 'Meta'} · Google: ${config.demoMode ? 'DEMO (agenda fictícia)' : googleConfigured() ? 'configurado' : 'não configurado'} · Cobrança: ${billingConfigured() ? 'Asaas' : 'demo'}`);
     if (!config.adminPassword) console.log('   ⚠️  Defina ADMIN_PASSWORD para acessar /admin.');
     startScheduler();
-    // Mantém o webhook da Evolution apontando para este servidor (útil quando a URL muda)
-    if (isEvolution() && !config.whatsapp.dryRun) {
-      evolutionEnsure().then(() => console.log(`   WhatsApp: webhook da Evolution → ${evolutionWebhookUrl()}`))
-        .catch((e) => console.warn(`   ⚠️  Evolution API: ${e.message} (conecte pelo /admin)`));
+    // Mantém o webhook de cada número apontando para este servidor (útil quando a URL muda)
+    if (isEvolution() && !config.whatsapp.forceDryRun) {
+      for (const c of listConnections({ withKey: true }).filter((x) => x.enabled)) {
+        evolutionEnsure(c).then(() => console.log(`   WhatsApp "${c.name}": webhook → ${evolutionWebhookUrl(c)}`))
+          .catch((e) => console.warn(`   ⚠️  WhatsApp "${c.name}": ${e.message} (veja no /admin)`));
+      }
     }
   });
 }

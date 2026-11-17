@@ -504,7 +504,7 @@ function welcome(tenant, profileName) {
 }
 
 /** Ponto de entrada do webhook (e do simulador): registra, responde e envia. */
-export async function handleIncoming({ from, text = '', type = 'text', profileName = null }, now = new Date()) {
+export async function handleIncoming({ from, text = '', type = 'text', profileName = null, connectionId = null }, now = new Date()) {
   const phone = String(from).replace(/\D/g, '');
   let tenant = getTenantByPhone(phone);
   let messages;
@@ -512,12 +512,13 @@ export async function handleIncoming({ from, text = '', type = 'text', profileNa
   if (!tenant) {
     tenant = createTenant(phone, now);
     ensureSystemRules(tenant.id);
-    tenant = updateTenant(tenant.id, { lastInboundAt: now.toISOString() });
+    tenant = updateTenant(tenant.id, { lastInboundAt: now.toISOString(), ...(connectionId ? { waConnectionId: connectionId } : {}) });
     logMessage({ tenantId: tenant.id, dir: 'in', text, intent: 'novo_cliente' });
     messages = welcome(tenant, profileName);
     intent = 'boas_vindas';
   } else {
-    tenant = updateTenant(tenant.id, { lastInboundAt: now.toISOString() });
+    // O cliente passa a ser atendido pelo número para o qual escreveu por último
+    tenant = updateTenant(tenant.id, { lastInboundAt: now.toISOString(), ...(connectionId && connectionId !== tenant.waConnectionId ? { waConnectionId: connectionId } : {}) });
     const r = await respond(tenant, text, now, { type });
     ({ messages, intent } = r);
     tenant = getTenant(tenant.id);

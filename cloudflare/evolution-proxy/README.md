@@ -17,21 +17,18 @@ Secretária ──(PROXY_TOKEN)──▶ Worker ──(chave real da Evolution)�
    | Tipo | Nome | Valor |
    |---|---|---|
    | Text | `EVOLUTION_URL` | `https://evoapi.agentenpe.com.br` |
-   | Text | `INSTANCE` | `secretaria` (a instância da Secretária) |
+   | Text | `INSTANCE` | `secretaria*` — instâncias liberadas. Vírgula separa nomes; `*` no fim libera todas que começam assim (ex.: `secretaria`, `secretaria-padaria`). |
    | **Secret** | `EVOLUTION_API_KEY` | a `AUTHENTICATION_API_KEY` da sua Evolution |
    | **Secret** | `PROXY_TOKEN` | um texto longo e aleatório (ex.: gere em um gerador de senhas, 40+ caracteres) |
 
    Clique em **Deploy** para salvar.
 4. Abra a URL do Worker (ex.: `https://secretaria-evolution-proxy.SEU-USUARIO.workers.dev`).
-   Deve aparecer `{"ok":true,"service":"evolution-proxy","instance":"secretaria"}`.
-5. No servidor da Secretária, configure:
-   ```
-   EVOLUTION_API_URL=https://secretaria-evolution-proxy.SEU-USUARIO.workers.dev
-   EVOLUTION_API_KEY=<o mesmo PROXY_TOKEN>
-   EVOLUTION_INSTANCE=secretaria
-   ```
-   (`EVOLUTION_API_KEY` aqui é o token do proxy, **não** a chave da Evolution.)
-6. Abra `/admin` na Secretária → **Conectar WhatsApp (QR Code)**.
+   Deve aparecer `{"ok":true,"service":"evolution-proxy","instance":"secretaria*"}`.
+5. Na Secretária, abra `/admin` → **Números da Secretária** → **Adicionar número**:
+   - **URL**: a do Worker (ex.: `https://secretaria-evolution-proxy.SEU-USUARIO.workers.dev`)
+   - **Chave**: o mesmo `PROXY_TOKEN` (**não** a chave da Evolution)
+   - **Instância**: um nome liberado em `INSTANCE` (ex.: `secretaria`, `secretaria-2`)
+6. Toque em **QR Code** e leia com o celular desse número. Repita o passo 5 para cada número novo.
 
 ## Se o PROXY_TOKEN vazar
 Troque o segredo `PROXY_TOKEN` no Cloudflare e no servidor da Secretária. A chave da Evolution continua segura.

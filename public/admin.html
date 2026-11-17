@@ -16,16 +16,23 @@
   .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; }
   .kpi b { display: block; font-size: 24px; }
   #chat { height: 460px; overflow-y: auto; }
-  .wa { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: start; margin-bottom: 14px; }
-  .wa .qr { width: 220px; height: 220px; border-radius: 12px; border: 1px solid var(--line); background: #fff; display: grid; place-items: center; overflow: hidden; }
-  .wa .qr[hidden] { display: none; }
-  .wa .qr img { width: 100%; height: 100%; image-rendering: pixelated; }
-  .wa .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .wa { margin-bottom: 14px; }
+  .wa .head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .conn { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line); }
+  .conn:first-of-type { border-top: 0; }
+  .conn .acts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+  .conn .meta { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
   .wa ol { margin: 8px 0 0; padding-left: 20px; font-size: 13.5px; color: var(--muted); }
-  .wa code { font-size: 12.5px; background: #ebe7de; padding: 1px 5px; border-radius: 5px; word-break: break-all; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: #cfcac0; }
+  code { font-size: 12.5px; background: #ebe7de; padding: 1px 5px; border-radius: 5px; word-break: break-all; }
+  .badge { font-size: 11px; font-weight: 700; background: #dcefe4; color: var(--ok); border-radius: 6px; padding: 1px 6px; margin-left: 6px; }
+  .badge.off { background: #ebe7de; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: #cfcac0; margin-right: 6px; flex: none; }
   .dot.ok { background: var(--ok); } .dot.warn { background: var(--accent); } .dot.bad { background: var(--bad); }
-  @media (max-width: 600px) { .wa { grid-template-columns: 1fr; } .wa .qr { width: 100%; height: auto; aspect-ratio: 1; } }
+  dialog { border: 0; border-radius: var(--radius); padding: 20px; width: min(94vw, 460px); background: var(--card); color: var(--ink); }
+  dialog::backdrop { background: rgba(0,0,0,.35); }
+  .qrbox { width: 100%; aspect-ratio: 1; max-width: 300px; margin: 0 auto; border-radius: 12px; border: 1px solid var(--line); background: #fff; display: grid; place-items: center; overflow: hidden; }
+  .qrbox img { width: 100%; height: 100%; image-rendering: pixelated; }
+  @media (max-width: 600px) { .conn { grid-template-columns: 1fr; } .conn .acts { justify-content: flex-start; } }
   @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } .kpis { grid-template-columns: 1fr 1fr; } }
 </style>
 </head>
@@ -34,19 +41,17 @@
 <div class="wrap">
   <div>
     <section class="card wa" id="wa">
-      <div>
-        <p class="label">WhatsApp da Secretária</p>
-        <div class="row" style="justify-content:flex-start"><span class="dot" id="waDot"></span><b id="waTitle">Carregando…</b></div>
-        <p class="muted" id="waText" style="margin:6px 0 0"></p>
-        <div id="waHelp"></div>
-        <div class="acts" id="waActs"></div>
+      <div class="head">
+        <p class="label" style="margin:0">Números da Secretária</p>
+        <button class="small primary" id="addConn" onclick="openConnForm()">+ Adicionar número</button>
       </div>
-      <div class="qr" id="waQr" hidden></div>
+      <p class="muted" id="waNote" style="margin:0 0 6px"></p>
+      <div id="conns"><div class="empty muted">Carregando…</div></div>
     </section>
     <div class="kpis" id="kpis"></div>
     <section class="card" style="overflow-x:auto">
       <p class="label">Clientes</p>
-      <table><thead><tr><th>#</th><th>Cliente</th><th>Situação</th><th>Agenda</th><th class="num">Enviadas</th><th class="num">Recebidas</th><th class="num">Não entendidas</th><th class="num">Alterações na agenda</th><th class="num">Custo (R$)</th><th></th></tr></thead><tbody id="rows"></tbody></table>
+      <table><thead><tr><th>#</th><th>Cliente</th><th>Situação</th><th>Número da Secretária</th><th>Agenda</th><th class="num">Enviadas</th><th class="num">Recebidas</th><th class="num">Não entendidas</th><th class="num">Alterações na agenda</th><th class="num">Custo (R$)</th><th></th></tr></thead><tbody id="rows"></tbody></table>
     </section>
   </div>
   <section class="card stack">
@@ -62,6 +67,31 @@
   </section>
 </div>
 <div class="toast" id="toast"></div>
+<dialog id="connDlg">
+  <form id="connForm" class="stack" autocomplete="off">
+    <p class="label" style="margin:0" id="connFormTitle">Adicionar número</p>
+    <label>Nome (só para você identificar)<input name="name" placeholder="Ex.: Secretária principal · Padaria Sol" required maxlength="80"></label>
+    <label>URL da Evolution API (ou do Worker do Cloudflare)<input name="apiUrl" placeholder="https://evoapi.seudominio.com.br" required inputmode="url"></label>
+    <label><span id="keyLabel">Chave</span><input name="apiKey" type="password" placeholder="API key da Evolution ou PROXY_TOKEN do Worker" autocomplete="new-password"></label>
+    <label>Instância<input name="instance" placeholder="Ex.: secretaria" required pattern="[A-Za-z0-9_.\-]{1,64}" title="Letras, números, - _ . (sem espaços)"></label>
+    <label>Número público (opcional, para o link do site)<input name="displayNumber" placeholder="5511900000000" inputmode="tel"></label>
+    <label class="row" style="justify-content:flex-start;gap:8px;color:var(--ink)"><input type="checkbox" name="enabled" style="width:auto" checked> Ativo (recebe e envia mensagens)</label>
+    <p class="muted" style="margin:0">A chave é guardada criptografada e nunca é mostrada de novo. Se a instância ainda não existir na Evolution, ela é criada quando você ler o QR Code.</p>
+    <div class="grid2"><button type="button" onclick="$('#connDlg').close()">Cancelar</button><button class="primary" type="submit">Salvar e testar</button></div>
+  </form>
+</dialog>
+<dialog id="qrDlg">
+  <div class="stack">
+    <p class="label" style="margin:0">Conectar <span id="qrName"></span></p>
+    <div class="qrbox" id="qrBox"><span class="muted">Gerando QR Code…</span></div>
+    <ol class="muted" style="margin:0;padding-left:20px">
+      <li>Use um <b>número só para a Secretária</b> (chip próprio), nunca o seu pessoal.</li>
+      <li>No celular: WhatsApp → ⋮ / Ajustes → <b>Aparelhos conectados</b> → Conectar aparelho.</li>
+      <li>Leia o QR Code acima. Esta janela fecha sozinha quando conectar.</li>
+    </ol>
+    <div class="grid2"><button type="button" onclick="closeQr()">Fechar</button><button type="button" class="primary" id="qrAgain">Gerar novo QR Code</button></div>
+  </div>
+</dialog>
 <script>
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -88,10 +118,19 @@ async function load() {
   $('#rows').innerHTML = t.map((x) => `<tr>
     <td>${x.id}</td><td><b>${esc(x.name || '—')}</b><br><span class="muted">+${esc(x.phone)}</span></td>
     <td><select class="small" onchange="setStatus(${x.id}, this.value)">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${k === x.status ? 'selected' : ''}>${v}</option>`).join('')}</select><br><span class="muted">${esc(x.statusLabel)}</span></td>
-    <td>${x.google ? (x.googleWrite ? '✅ edita' : '✅ leitura') : '—'}</td><td class="num">${x.sent}</td><td class="num">${x.received}</td><td class="num">${x.unknown}</td><td class="num">${x.calendarActions}</td><td class="num">${x.estCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-    <td><button class="small" onclick="link(${x.id})">Link</button></td></tr>`).join('') || '<tr><td colspan="10" class="muted">Nenhum cliente ainda. Use o simulador ao lado.</td></tr>';
+    <td>${connSelect(x)}</td><td>${x.google ? (x.googleWrite ? '✅ edita' : '✅ leitura') : '—'}</td><td class="num">${x.sent}</td><td class="num">${x.received}</td><td class="num">${x.unknown}</td><td class="num">${x.calendarActions}</td><td class="num">${x.estCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+    <td><button class="small" onclick="link(${x.id})">Link</button></td></tr>`).join('') || '<tr><td colspan="11" class="muted">Nenhum cliente ainda. Use o simulador ao lado.</td></tr>';
   $('#simNote').textContent = d.dryRun ? 'Converse como se fosse um cliente. Nada é enviado de verdade.' : 'Simulador desligado: o WhatsApp real está ativo.';
 }
+let conns = [];
+function connSelect(x) {
+  if (!conns.length) return '<span class="muted">—</span>';
+  const own = conns.find((c) => c.id === x.waConnectionId);
+  return `<select class="small" onchange="setConn(${x.id}, this.value)">
+    <option value="" ${own ? '' : 'selected'}>Padrão${own ? '' : ` (${esc(conns.find((c) => c.isDefault)?.name || '—')})`}</option>
+    ${conns.map((c) => `<option value="${c.id}" ${c.id === x.waConnectionId ? 'selected' : ''}>${esc(c.name)}${c.enabled ? '' : ' (desligado)'}</option>`).join('')}</select>`;
+}
+async function setConn(id, connectionId) { try { await api(`/api/admin/tenants/${id}/connection`, 'POST', { connectionId: connectionId || null }); toast('Número do cliente alterado'); load(); } catch (e) { toast(e.message); } }
 async function setStatus(id, status) { try { await api(`/api/admin/tenants/${id}/status`, 'POST', { status }); toast('Situação alterada'); load(); } catch (e) { toast(e.message); } }
 async function link(id) { const r = await api(`/api/admin/tenants/${id}/link`); await navigator.clipboard?.writeText(r.url).catch(() => {}); prompt('Link de acesso (15 min, uso único):', r.url); }
 
@@ -125,89 +164,126 @@ async function openPanel() {
   if (!t) return toast('Esse número ainda não é cliente');
   const r = await api(`/api/admin/tenants/${t.id}/link`); window.open(r.url, '_blank');
 }
-// ---------------------------------------------------------------- WhatsApp (Evolution API)
-let waPoll = null;
+// ---------------------------------------------------------------- Números da Secretária (Evolution API)
 const STATE = {
-  open: ['ok', 'Conectado'], connecting: ['warn', 'Aguardando leitura do QR Code'], close: ['bad', 'Desconectado'],
-  not_found: ['bad', 'Ainda não conectado'], erro: ['bad', 'Evolution API inacessível'],
+  open: ['ok', 'Conectado'], connecting: ['warn', 'Aguardando QR Code'], close: ['bad', 'Desconectado'],
+  not_found: ['bad', 'Ainda não conectado'], erro: ['bad', 'Evolution inacessível'], disabled: ['', 'Desligado'],
 };
+let waInfo = {};
 async function loadWa() {
-  const w = await api('/api/admin/whatsapp');
-  const help = $('#waHelp'); const acts = $('#waActs'); const qr = $('#waQr');
-  help.innerHTML = ''; acts.innerHTML = '';
-  if (w.provider === 'meta') {
-    $('#waDot').className = `dot ${w.dryRun ? 'warn' : 'ok'}`;
-    $('#waTitle').textContent = w.dryRun ? 'API oficial da Meta — modo simulação' : 'API oficial da Meta';
-    $('#waText').innerHTML = `Webhook: <code>${esc(w.webhookUrl)}</code>`;
-    qr.hidden = true; return w;
+  waInfo = await api('/api/admin/whatsapp');
+  conns = waInfo.connections;
+  $('#addConn').hidden = waInfo.provider !== 'evolution';
+  if (waInfo.provider === 'meta') {
+    $('#waNote').innerHTML = `Usando a API oficial da Meta (um número, configurado no .env). Webhook: <code>${esc(waInfo.metaWebhook)}</code>`;
+    $('#conns').innerHTML = ''; return waInfo;
   }
-  if (!w.configured) {
-    $('#waDot').className = 'dot warn';
-    $('#waTitle').textContent = 'Modo simulação (nenhuma mensagem sai de verdade)';
-    $('#waText').textContent = 'Para usar um número real, ligue este sistema a uma Evolution API:';
-    help.innerHTML = `<ol>
-      <li>Suba uma Evolution API (v2) — veja o passo a passo no README.</li>
-      <li>Preencha no servidor: <code>EVOLUTION_API_URL</code> e <code>EVOLUTION_API_KEY</code> (a <code>AUTHENTICATION_API_KEY</code> da Evolution).</li>
-      <li>Reinicie e volte aqui: vai aparecer o QR Code para ler com o celular da Secretária.</li></ol>`;
-    acts.innerHTML = '<span class="muted">Enquanto isso, teste tudo pelo simulador ao lado.</span>';
-    qr.hidden = true; return w;
-  }
-  const [cls, title] = STATE[w.state] || ['warn', w.state];
-  $('#waDot').className = `dot ${cls}`;
-  $('#waTitle').textContent = w.state === 'open' && w.number ? `Conectado: +${w.number}${w.profileName ? ` (${w.profileName})` : ''}` : title;
-  $('#waText').innerHTML = w.error ? esc(w.error)
-    : `Evolution: <code>${esc(w.apiUrl)}</code> · instância <code>${esc(w.instance)}</code><br>Webhook: <code>${esc(w.webhookUrl)}</code>${w.dryRun ? '<br>⚠️ WHATSAPP_DRY_RUN=true: as mensagens não saem de verdade.' : ''}`;
-  if (w.state === 'open') {
-    acts.innerHTML = `<button class="small" onclick="waTest(this)">Enviar mensagem de teste</button>
-      <button class="small" onclick="waHook(this)">Reaplicar webhook</button>
-      <button class="small danger" onclick="waLogout(this)">Desconectar número</button>`;
-    qr.hidden = true; stopPoll();
-  } else if (w.state !== 'erro') {
-    acts.innerHTML = `<button class="small primary" onclick="waConnect(this)">${w.state === 'connecting' ? 'Gerar novo QR Code' : 'Conectar WhatsApp (QR Code)'}</button>`;
-    help.innerHTML = `<ol><li>Use um <b>número só para a Secretária</b> (chip novo), nunca o seu pessoal.</li>
-      <li>No celular: WhatsApp → ⋮ / Ajustes → <b>Aparelhos conectados</b> → Conectar aparelho.</li>
-      <li>Leia o QR Code que vai aparecer aqui.</li></ol>`;
-  } else {
-    acts.innerHTML = '<button class="small" onclick="loadWa()">Tentar de novo</button>';
-  }
-  return w;
+  $('#waNote').innerHTML = waInfo.forcedSimulation ? '⚠️ WHATSAPP_DRY_RUN=true: nada sai de verdade, mesmo com números cadastrados.'
+    : waInfo.simulation ? 'Nenhum número ativo: modo simulação (teste pelo simulador ao lado). Cadastre um número para atender clientes de verdade.'
+      : 'Cada cliente é atendido pelo número para o qual escreveu. Novos avisos sem número definido saem pelo <b>padrão</b>.';
+  $('#conns').innerHTML = conns.length ? conns.map((c) => `
+    <div class="conn" id="conn-${c.id}">
+      <div>
+        <div class="row" style="justify-content:flex-start;gap:0"><span class="dot" data-dot></span><b>${esc(c.name)}</b>${c.isDefault ? '<span class="badge">PADRÃO</span>' : ''}${c.enabled ? '' : '<span class="badge off">DESLIGADO</span>'}</div>
+        <div class="meta"><span data-state>${c.enabled ? 'verificando…' : 'desligado'}</span> · ${c.clients} cliente(s)</div>
+        <div class="meta"><code>${esc(c.apiUrl)}</code> · instância <code>${esc(c.instance)}</code> · chave ${esc(c.keyHint || '—')}</div>
+      </div>
+      <div class="acts">
+        ${c.enabled ? `<button class="small primary" data-qr onclick="openQr(${c.id})">QR Code</button>
+        <button class="small" onclick="testConn(this, ${c.id})">Testar envio</button>` : ''}
+        ${c.enabled && !c.isDefault ? `<button class="small" onclick="connAct(this, ${c.id}, 'default', 'Agora é o padrão')">Tornar padrão</button>` : ''}
+        <button class="small" onclick="openConnForm(${c.id})">Editar</button>
+        <button class="small" onclick="connMore(this, ${c.id})">⋯</button>
+      </div>
+    </div>`).join('') : `<ol>
+      <li>Tenha uma Evolution API v2 no ar (a sua ou a do <code>docker-compose.yml</code>). Se quiser esconder a chave, use a ponte do Cloudflare (<code>cloudflare/evolution-proxy</code>).</li>
+      <li>Toque em <b>+ Adicionar número</b> e preencha URL, chave e um nome de instância (ex.: <code>secretaria</code>).</li>
+      <li>Toque em <b>QR Code</b> e leia com o celular do número. Repita para cada número que quiser.</li></ol>`;
+  for (const c of conns.filter((x) => x.enabled)) refreshConn(c.id);
+  return waInfo;
 }
-function stopPoll() { clearInterval(waPoll); waPoll = null; }
-async function waConnect(btn) {
-  btn.disabled = true;
+async function refreshConn(id) {
+  const el = $(`#conn-${id}`); if (!el) return;
+  const st = await api(`/api/admin/whatsapp/${id}/status`).catch((e) => ({ state: 'erro', error: e.message }));
+  const [cls, label] = STATE[st.state] || ['warn', st.state];
+  el.querySelector('[data-dot]').className = `dot ${cls}`;
+  el.querySelector('[data-state]').textContent = st.state === 'open' ? `Conectado${st.number ? `: +${st.number}` : ''}${st.profileName ? ` (${st.profileName})` : ''}` : st.error ? `${label}: ${st.error}` : label;
+  const qrBtn = el.querySelector('[data-qr]');
+  if (qrBtn) qrBtn.hidden = st.state === 'open';
+  return st;
+}
+
+// --- cadastro / edição
+let editing = null;
+function openConnForm(id) {
+  const f = $('#connForm'); f.reset();
+  editing = id ? conns.find((c) => c.id === id) : null;
+  $('#connFormTitle').textContent = editing ? `Editar ${editing.name}` : 'Adicionar número';
+  $('#keyLabel').textContent = editing ? `Chave (deixe em branco para manter ${editing.keyHint || ''})` : 'Chave';
+  f.apiKey.required = !editing;
+  if (editing) { f.name.value = editing.name; f.apiUrl.value = editing.apiUrl; f.instance.value = editing.instance; f.displayNumber.value = editing.displayNumber || ''; f.enabled.checked = editing.enabled; }
+  else { f.enabled.checked = true; const last = conns.at(-1); if (last) f.apiUrl.value = last.apiUrl; }
+  $('#connDlg').showModal();
+}
+$('#connForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const f = e.target; const btn = e.submitter; btn.disabled = true;
+  const body = { name: f.name.value, apiUrl: f.apiUrl.value, apiKey: f.apiKey.value, instance: f.instance.value, displayNumber: f.displayNumber.value, enabled: f.enabled.checked };
   try {
-    const r = await api('/api/admin/whatsapp/connect', 'POST');
-    if (r.state === 'open') { toast('Já está conectado ✅'); return loadWa(); }
-    const qr = $('#waQr');
-    qr.hidden = false;
-    qr.innerHTML = r.qr ? `<img alt="QR Code do WhatsApp" src="${esc(r.qr)}">` : `<span class="muted" style="padding:12px;text-align:center">${r.pairingCode ? `Código de pareamento:<br><b style="font-size:22px">${esc(r.pairingCode)}</b>` : 'Gerando QR Code… toque de novo em alguns segundos.'}</span>`;
-    $('#waDot').className = 'dot warn'; $('#waTitle').textContent = STATE.connecting[1];
-    stopPoll();
-    let n = 0;
-    waPoll = setInterval(async () => {
-      n += 1;
-      const w = await api('/api/admin/whatsapp').catch(() => null);
-      if (w?.state === 'open') { stopPoll(); toast('WhatsApp conectado ✅'); loadWa(); }
-      else if (n >= 15) { stopPoll(); qr.innerHTML = '<span class="muted" style="padding:12px;text-align:center">QR Code expirou.<br>Toque em "Gerar novo QR Code".</span>'; loadWa(); }
-    }, 4000);
-  } catch (e) { toast(e.message); } finally { btn.disabled = false; }
+    const r = editing ? await api(`/api/admin/whatsapp/${editing.id}`, 'PUT', body) : await api('/api/admin/whatsapp', 'POST', body);
+    $('#connDlg').close();
+    toast(r.state === 'open' ? 'Salvo: número já conectado ✅' : 'Salvo. Agora toque em QR Code para conectar.');
+    await loadWa(); load();
+  } catch (err) { toast(err.message); } finally { btn.disabled = false; }
+};
+
+// --- QR Code
+let qrPoll = null; let qrId = null;
+function closeQr() { clearInterval(qrPoll); qrPoll = null; $('#qrDlg').close(); }
+async function openQr(id) {
+  qrId = id;
+  $('#qrName').textContent = conns.find((c) => c.id === id)?.name || '';
+  $('#qrBox').innerHTML = '<span class="muted">Gerando QR Code…</span>';
+  if (!$('#qrDlg').open) $('#qrDlg').showModal();
+  try {
+    const r = await api(`/api/admin/whatsapp/${id}/connect`, 'POST');
+    if (r.state === 'open') { closeQr(); toast('Já está conectado ✅'); return refreshConn(id); }
+    $('#qrBox').innerHTML = r.qr ? `<img alt="QR Code do WhatsApp" src="${esc(r.qr)}">`
+      : `<span class="muted" style="padding:12px;text-align:center">${r.pairingCode ? `Código de pareamento:<br><b style="font-size:22px">${esc(r.pairingCode)}</b>` : 'O QR Code ainda não ficou pronto. Toque em "Gerar novo QR Code".'}</span>`;
+  } catch (e) { $('#qrBox').innerHTML = `<span class="muted" style="padding:12px;text-align:center">${esc(e.message)}</span>`; return; }
+  clearInterval(qrPoll);
+  let n = 0;
+  qrPoll = setInterval(async () => {
+    n += 1;
+    const st = await refreshConn(id).catch(() => null);
+    if (st?.state === 'open') { closeQr(); toast('WhatsApp conectado ✅'); loadWa(); }
+    else if (n >= 15) { clearInterval(qrPoll); $('#qrBox').innerHTML = '<span class="muted" style="padding:12px;text-align:center">QR Code expirou.<br>Toque em "Gerar novo QR Code".</span>'; }
+  }, 4000);
 }
-async function waLogout(btn) {
-  if (!confirm('Desconectar o número da Secretária? Os clientes param de receber mensagens até você conectar de novo.')) return;
-  btn.disabled = true;
-  try { await api('/api/admin/whatsapp/logout', 'POST'); toast('Número desconectado'); loadWa(); } catch (e) { toast(e.message); btn.disabled = false; }
+$('#qrAgain').onclick = () => qrId && openQr(qrId);
+
+// --- outras ações
+async function connAct(btn, id, action, ok) {
+  if (btn) btn.disabled = true;
+  try { const r = await api(`/api/admin/whatsapp/${id}/${action}`, 'POST'); toast(ok || 'Feito'); await loadWa(); load(); return r; } catch (e) { toast(e.message); } finally { if (btn) btn.disabled = false; }
 }
-async function waHook(btn) {
-  btn.disabled = true;
-  try { const r = await api('/api/admin/whatsapp/webhook', 'POST'); toast(`Webhook → ${r.url}`); } catch (e) { toast(e.message); } finally { btn.disabled = false; }
-}
-async function waTest(btn) {
+async function testConn(btn, id) {
   const phone = prompt('Enviar mensagem de teste para qual número? (DDI + DDD + número, ex.: 5511999990000)');
   if (!phone) return;
   btn.disabled = true;
-  try { const r = await api('/api/admin/whatsapp/test', 'POST', { phone }); toast(r.dryRun ? 'Simulação: nada foi enviado' : 'Mensagem de teste enviada ✅'); } catch (e) { toast(e.message); } finally { btn.disabled = false; }
+  try { const r = await api(`/api/admin/whatsapp/${id}/test`, 'POST', { phone }); toast(r.dryRun ? 'Simulação: nada foi enviado' : 'Mensagem de teste enviada ✅'); } catch (e) { toast(e.message); } finally { btn.disabled = false; }
 }
-loadWa().then((w) => { $('#send').hidden = !w.dryRun; $('#chat').hidden = !w.dryRun; }).catch((e) => toast(e.message));
+async function connMore(btn, id) {
+  const c = conns.find((x) => x.id === id);
+  const op = prompt(`${c.name}: o que fazer?\n\n1 = Reaplicar webhook (se mudou o endereço do sistema)\n2 = Desconectar o celular deste número\n3 = ${c.enabled ? 'Desligar' : 'Ligar'} este número\n4 = Remover do cadastro\n\nDigite o número da opção:`);
+  if (op === '1') connAct(btn, id, 'webhook', 'Webhook reaplicado');
+  else if (op === '2' && confirm(`Desconectar o celular de "${c.name}"? Os clientes desse número param de receber mensagens até você ler o QR Code de novo.`)) connAct(btn, id, 'logout', 'Número desconectado');
+  else if (op === '3') { try { await api(`/api/admin/whatsapp/${id}`, 'PUT', { enabled: !c.enabled }); toast(c.enabled ? 'Número desligado' : 'Número ligado'); await loadWa(); load(); } catch (e) { toast(e.message); } }
+  else if (op === '4' && confirm(`Remover "${c.name}" do cadastro?\n\nOs clientes dele passam a ser atendidos pelo número padrão. O celular continua conectado na Evolution (desconecte antes, se quiser).`)) {
+    try { await api(`/api/admin/whatsapp/${id}`, 'DELETE'); toast('Número removido'); await loadWa(); load(); } catch (e) { toast(e.message); }
+  }
+}
+loadWa().then((w) => { $('#send').hidden = !w.simulation; $('#chat').hidden = !w.simulation; load(); }).catch((e) => toast(e.message));
 
 $('#send').onsubmit = (e) => { e.preventDefault(); const v = $('#msg').value.trim(); if (!v) return; $('#msg').value = ''; sim(v); };
 load(); setInterval(load, 30000);
