@@ -24,7 +24,10 @@ import {
   completeTask, createTask, deleteTask, getTask, listTasks, tasksForDay, updateTask,
 } from './tasks.js';
 import { addDays, addMinutes, atTime, dayKey, fmtDayLong } from './time.js';
-import { extractMessages, outbox, validSignature, whatsappConfigured } from './whatsapp.js';
+import {
+  evolutionConnect, evolutionEnsure, evolutionInfo, evolutionLogout, evolutionState, evolutionWebhookUrl, extractConnection, extractEvolution,
+  extractMessages, isEvolution, outbox, sendText, validEvolutionToken, validSignature, whatsappConfigured,
+} from './whatsapp.js';
 import { parseDateTime } from './nlu/datetime.js';
 
 openDb();
@@ -50,16 +53,36 @@ app.get('/webhook', (req, res) => {
   return ok ? res.status(200).send(req.query['hub.challenge']) : res.sendStatus(403);
 });
 
-const seen = new Set(); // a Meta pode reenviar o mesmo evento
+const seen = new Set(); // o provedor pode reenviar o mesmo evento
+const lanes = new Map(); // mensagens do mesmo número são processadas uma de cada vez, na ordem
+function receive(m) {
+  if (!m.id || seen.has(m.id)) return;
+  seen.add(m.id);
+  if (seen.size > 5000) seen.delete(seen.values().next().value);
+  const prev = lanes.get(m.from) || Promise.resolve();
+  const next = prev.then(() => handleIncoming(m)).catch((err) => console.error('[webhook]', err));
+  lanes.set(m.from, next);
+  next.finally(() => { if (lanes.get(m.from) === next) lanes.delete(m.from); });
+}
+
+// --- webhook da Evolution API (provedor padrão)
+const wa = { state: null, at: null }; // último estado de conexão informado pela Evolution
+app.post('/webhook/evolution', (req, res) => {
+  if (!validEvolutionToken(req)) return res.sendStatus(401);
+  res.sendStatus(200);
+  const state = extractConnection(req.body);
+  if (state) {
+    if (wa.state === 'open' && state === 'close') console.warn('[whatsapp] o número da Secretária DESCONECTOU — reconecte em /admin');
+    Object.assign(wa, { state, at: new Date().toISOString() });
+  }
+  for (const m of extractEvolution(req.body)) receive(m);
+});
+
+// --- webhook da Meta (WHATSAPP_PROVIDER=meta)
 app.post('/webhook', (req, res) => {
   if (!validSignature(req.rawBody, req.get('x-hub-signature-256'))) return res.sendStatus(401);
   res.sendStatus(200); // responde rápido; processa em seguida
-  for (const m of extractMessages(req.body)) {
-    if (seen.has(m.id)) continue;
-    seen.add(m.id);
-    if (seen.size > 5000) seen.delete(seen.values().next().value);
-    handleIncoming(m).catch((err) => console.error('[webhook]', err));
-  }
+  for (const m of extractMessages(req.body)) receive(m);
 });
 
 // --- webhook de cobrança (Asaas)
@@ -370,7 +393,8 @@ function admin(req, res, next) {
   if (config.adminPassword && safeEqual(pass, config.adminPassword)) return next();
   res.set('WWW-Authenticate', 'Basic realm="Admin"').sendStatus(401);
 }
-const COST_PER_MSG = Number(process.env.COST_PER_MESSAGE_BRL || 0.035);
+// Meta cobra por mensagem; na Evolution o custo é só o do servidor (0 por mensagem, salvo se você definir outro valor)
+const COST_PER_MSG = Number(process.env.COST_PER_MESSAGE_BRL ?? (config.whatsapp.provider === 'meta' ? 0.035 : 0));
 
 app.get('/admin', admin, page('admin.html'));
 app.get('/api/admin/tenants', admin, (_req, res) => {
@@ -402,6 +426,39 @@ app.post('/api/admin/tenants/:id/status', admin, (req, res) => {
 });
 app.get('/api/admin/tenants/:id/link', admin, (req, res) => res.json({ url: magicLink(Number(req.params.id), '/app') }));
 
+// --- conexão do WhatsApp (Evolution API)
+app.get('/api/admin/whatsapp', admin, asyncH(async (_req, res) => {
+  const base = {
+    provider: isEvolution() ? 'evolution' : 'meta', configured: whatsappConfigured(), dryRun: config.whatsapp.dryRun,
+    instance: config.whatsapp.evolution.instance, apiUrl: config.whatsapp.evolution.url || null, webhookUrl: isEvolution() ? evolutionWebhookUrl() : `${config.baseUrl}/webhook`,
+    webhookProtected: Boolean(config.whatsapp.evolution.webhookToken), lastEvent: wa,
+  };
+  if (!isEvolution() || !whatsappConfigured()) return res.json(base);
+  try {
+    const state = await evolutionState();
+    res.json({ ...base, state, ...(state === 'open' ? await evolutionInfo() : {}) });
+  } catch (e) { res.json({ ...base, state: 'erro', error: e.message }); }
+}));
+app.post('/api/admin/whatsapp/connect', admin, asyncH(async (_req, res) => {
+  if (!isEvolution() || !whatsappConfigured()) return res.status(400).json({ error: 'Configure EVOLUTION_API_URL e EVOLUTION_API_KEY primeiro.' });
+  try { res.json(await evolutionConnect()); } catch (e) { res.status(502).json({ error: e.message }); }
+}));
+app.post('/api/admin/whatsapp/webhook', admin, asyncH(async (_req, res) => {
+  if (!isEvolution() || !whatsappConfigured()) return res.status(400).json({ error: 'Evolution API não configurada.' });
+  try { await evolutionEnsure(); res.json({ ok: true, url: evolutionWebhookUrl() }); } catch (e) { res.status(502).json({ error: e.message }); }
+}));
+app.post('/api/admin/whatsapp/logout', admin, asyncH(async (_req, res) => {
+  try { await evolutionLogout(); res.json({ ok: true }); } catch (e) { res.status(502).json({ error: e.message }); }
+}));
+app.post('/api/admin/whatsapp/test', admin, asyncH(async (req, res) => {
+  const to = String(req.body.phone || '').replace(/\D/g, '');
+  if (to.length < 10) return res.status(400).json({ error: 'Informe o telefone com DDI e DDD (ex.: 5511999990000)' });
+  try {
+    const r = await sendText(to, `✅ Teste da ${config.productName}: o WhatsApp está conectado e enviando mensagens.`);
+    res.json({ ok: true, dryRun: Boolean(r?.dryRun) });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+}));
+
 /** Simulador de WhatsApp (só no modo simulação): manda uma mensagem como se fosse o cliente. */
 app.post('/api/admin/simulate', admin, asyncH(async (req, res) => {
   if (!config.whatsapp.dryRun) return res.status(400).json({ error: 'Simulador disponível só com WHATSAPP_DRY_RUN=true' });
@@ -431,9 +488,14 @@ app.use((err, _req, res, _next) => {
 if (process.env.NODE_ENV !== 'test') {
   app.listen(config.port, () => {
     console.log(`\n📱 ${config.productName} rodando em ${config.baseUrl}`);
-    console.log(`   Fuso: ${config.timezone} · WhatsApp: ${config.whatsapp.dryRun ? 'SIMULAÇÃO' : 'ativo'} · Google: ${config.demoMode ? 'DEMO (agenda fictícia)' : googleConfigured() ? 'configurado' : 'não configurado'} · Cobrança: ${billingConfigured() ? 'Asaas' : 'demo'}`);
+    console.log(`   Fuso: ${config.timezone} · WhatsApp: ${config.whatsapp.dryRun ? 'SIMULAÇÃO' : isEvolution() ? `Evolution (${config.whatsapp.evolution.url})` : 'Meta'} · Google: ${config.demoMode ? 'DEMO (agenda fictícia)' : googleConfigured() ? 'configurado' : 'não configurado'} · Cobrança: ${billingConfigured() ? 'Asaas' : 'demo'}`);
     if (!config.adminPassword) console.log('   ⚠️  Defina ADMIN_PASSWORD para acessar /admin.');
     startScheduler();
+    // Mantém o webhook da Evolution apontando para este servidor (útil quando a URL muda)
+    if (isEvolution() && !config.whatsapp.dryRun) {
+      evolutionEnsure().then(() => console.log(`   WhatsApp: webhook da Evolution → ${evolutionWebhookUrl()}`))
+        .catch((e) => console.warn(`   ⚠️  Evolution API: ${e.message} (conecte pelo /admin)`));
+    }
   });
 }
 

@@ -3,6 +3,7 @@
 process.env.NODE_ENV = 'test';
 process.env.DB_FILE = ':memory:';
 process.env.WHATSAPP_TOKEN = '';
+process.env.EVOLUTION_API_URL = '';
 const { handleIncoming } = await import('../src/conversation.js');
 const { getTenantByPhone, getTenant, openDb, updateTenant } = await import('../src/db.js');
 const { connectDemo } = await import('../src/google.js');

@@ -44,6 +44,7 @@ const accessNote = () => (config.calendarWrite ? 'eu só mexo nela quando você 
 const PENDING_MIN = 15;   // confirmações de agenda valem 15 min
 const UNDO_MIN = 30;      // dá para desfazer a última alteração por 30 min
 const YES_NO = [{ id: 'sim', title: '✅ Confirmar' }, { id: 'nao', title: '✖️ Não' }];
+const YES_NO_TEXT = 'Responda *SIM* para confirmar ou *NÃO* para deixar como está.';
 const fresh = (iso, now, min) => Boolean(iso) && now - new Date(iso) < min * 60e3;
 const reviveDraft = (d) => ({ ...d, start: new Date(d.start), end: new Date(d.end) });
 
@@ -110,7 +111,7 @@ export async function respond(tenant, text, now = new Date(), { type = 'text' } 
     say(`✍️ Para eu marcar e remarcar compromissos, preciso da sua permissão para editar a agenda (hoje tenho só leitura).\n\nToque para autorizar, leva 30 segundos:\n${connectLink(t)}\n\nEu só altero algo quando você pedir e confirmar.`);
     return true;
   };
-  const ask = (pending, txt, buttons) => { ctx.pending = { ...pending, at: now.toISOString() }; say(txt, buttons ? { buttons } : {}); save(); };
+  const ask = (pending, txt, buttons) => { ctx.pending = { ...pending, at: now.toISOString() }; say(txt, buttons ? { buttons, buttonsFallback: YES_NO_TEXT } : {}); save(); };
 
   const proposeCreate = (draft) => {
     if (!draft.title || draft.title.length < 2) {

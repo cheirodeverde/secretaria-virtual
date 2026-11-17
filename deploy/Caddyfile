@@ -1,0 +1,5 @@
+# HTTPS automático (Let's Encrypt) para o seu domínio — defina DOMAIN no .env
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy app:3000
+}

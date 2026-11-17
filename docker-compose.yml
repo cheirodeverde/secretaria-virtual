@@ -1,0 +1,90 @@
+# Tudo em um servidor (VPS): Secretária + Evolution API + Postgres + Redis + HTTPS (Caddy).
+#   1. cp .env.example .env  e preencha (DOMAIN, APP_SECRET, ADMIN_PASSWORD, EVOLUTION_API_KEY, POSTGRES_PASSWORD...)
+#   2. aponte o DNS do DOMAIN para o IP do servidor
+#   3. docker compose up -d
+#   4. abra https://SEU-DOMINIO/admin e conecte o WhatsApp pelo QR Code
+services:
+  app:
+    build: .
+    restart: always
+    env_file: .env
+    environment:
+      BASE_URL: https://${DOMAIN}
+      WHATSAPP_PROVIDER: evolution
+      EVOLUTION_API_URL: http://evolution:8080
+      # a Evolution entrega as mensagens pela rede interna (não sai para a internet)
+      EVOLUTION_WEBHOOK_URL: http://app:3000/webhook/evolution
+      DB_FILE: /app/data/secretaria.db
+    volumes:
+      - app_data:/app/data
+    depends_on:
+      - evolution
+
+  evolution:
+    image: evoapicloud/evolution-api:v2.3.7
+    restart: always
+    environment:
+      SERVER_URL: http://evolution:8080
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:${POSTGRES_PASSWORD}@postgres:5432/evolution?schema=evolution_api
+      DATABASE_CONNECTION_CLIENT_NAME: secretaria
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      # Privacidade (LGPD): a Evolution não precisa guardar as conversas — a Secretária já registra o necessário
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "false"
+      DATABASE_SAVE_MESSAGE_UPDATE: "false"
+      DATABASE_SAVE_DATA_CONTACTS: "false"
+      DATABASE_SAVE_DATA_CHATS: "false"
+      DATABASE_SAVE_DATA_LABELS: "false"
+      DATABASE_SAVE_DATA_HISTORIC: "false"
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/6
+      CACHE_REDIS_PREFIX_KEY: evolution
+      CACHE_LOCAL_ENABLED: "false"
+      CONFIG_SESSION_PHONE_CLIENT: Secretaria
+      CONFIG_SESSION_PHONE_NAME: Chrome
+      LANGUAGE: pt-BR
+      LOG_LEVEL: ERROR,WARN,INFO
+    volumes:
+      - evolution_instances:/evolution/instances
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_DB: evolution
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    restart: always
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+
+  caddy:
+    image: caddy:2
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - app
+
+volumes:
+  app_data:
+  evolution_instances:
+  postgres_data:
+  redis_data:
+  caddy_data:

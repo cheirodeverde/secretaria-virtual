@@ -56,8 +56,10 @@ test('conversa completa: cadastro, tarefas, agenda, regras, cobrança', async ()
   const sent = await processTenant(getTenant(t.id), at('10:00', d1));
   const rem = sent.find((a) => a.kind === 'tarefa');
   assert.ok(rem, 'lembrete de tarefa enviado');
-  assert.equal(outbox.find((m) => m.type === 'interactive')?.interactive.action.buttons[0].reply.id, `btn:done:${rem.taskId}`);
-  assert.match(await say(`btn:done:${rem.taskId}`, at('10:01', d1)), /Concluída: Ligar pro contador/);
+  const remText = outbox.filter((m) => m.type === 'text').map((m) => m.text.body).find((b) => /Ligar pro contador/.test(b) && /Responda FEITO/.test(b));
+  assert.ok(remText, 'lembrete com instrução em texto (Evolution não tem botões)');
+  const num = remText.match(/Responda FEITO (\d+)/)[1];
+  assert.match(await say(`feito ${num}`, at('10:01', d1)), /Concluída: Ligar pro contador/);
   assert.equal(listTasks(t.id).length, 1);
 
   // 8. Não perturbe: alerta às 23h vai para a fila e sai às 07:00

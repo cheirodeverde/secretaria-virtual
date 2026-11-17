@@ -32,7 +32,9 @@ test('marcar, remarcar, desfazer e desmarcar pelo WhatsApp', async () => {
   // 1. Pedido de marcação → confirmação com botões e aviso de conflito (o dentista de amanhã é 15:00–15:30)
   const ask = await say('marcar reunião com João amanhã 15h', at('09:00'));
   assert.match(ask, /Vou marcar[\s\S]*\*Reunião com João\*[\s\S]*amanhã, 15:00–16:00[\s\S]*Choca com: Dentista/);
-  assert.deepEqual(lastMsg().interactive.action.buttons.map((b) => b.reply.id), ['sim', 'nao']);
+  // Evolution não tem botões: a confirmação vira instrução em texto
+  assert.equal(lastMsg().type, 'text');
+  assert.match(ask, /Responda \*SIM\* para confirmar ou \*NÃO\*/);
   assert.equal(getEvents(id).some((e) => e.title === 'Reunião com João'), false, 'nada muda antes de confirmar');
 
   // 2. Confirma (o botão chega como "sim")
