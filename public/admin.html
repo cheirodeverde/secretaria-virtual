@@ -38,6 +38,12 @@
 </head>
 <body>
 <h1 style="max-width:1180px;margin:0 auto 14px">Painel do SaaS</h1>
+<section class="card" id="noServer" hidden style="max-width:1180px;margin:0 auto 14px;border-color:var(--bad)">
+  <p class="label" style="color:var(--bad)">O servidor da Secretária não está rodando neste endereço</p>
+  <p style="margin:0">Esta página foi aberta, mas o sistema por trás dela não respondeu. Nada do que você salvar aqui fica guardado.
+  Isso acontece em hospedagens só de páginas (Vercel, Netlify, Cloudflare Pages), que não rodam o servidor da Secretária.</p>
+  <p class="muted" style="margin:8px 0 0">Abra o <code>/admin</code> no endereço do servidor (sua VPS, Railway ou o Codespaces). Lá ele pede usuário e senha antes de abrir.</p>
+</section>
 <div class="wrap">
   <div>
     <section class="card wa" id="wa">
@@ -99,6 +105,11 @@ const toast = (m) => { const t = $('#toast'); t.textContent = m; t.classList.add
 async function api(url, method = 'GET', body) {
   const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   const d = await r.json().catch(() => ({}));
+  // 404 em /api/admin = página servida sem o servidor (ex.: Vercel/Pages)
+  if (r.status === 404 && url.startsWith('/api/admin/') && !d.error) {
+    $('#noServer').hidden = false;
+    throw new Error('Servidor da Secretária não encontrado neste endereço');
+  }
   if (!r.ok) throw new Error(d.error || `Erro ${r.status}`);
   return d;
 }
