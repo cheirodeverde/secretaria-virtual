@@ -25,7 +25,7 @@ O WhatsApp é conectado pela **[Evolution API](https://github.com/EvolutionAPI/e
 
 ```bash
 npm install                # Node 22.13+
-npm test                   # 23 testes: datas, intenções, compromissos, Evolution API, motor de regras e conversas completas
+npm test                   # 25 testes: datas, intenções, compromissos, Evolution API, motor de regras e conversas completas
 npm run demo:conversa      # imprime no terminal uma conversa real com a Secretária
 npm run demo               # servidor com agenda fictícia e WhatsApp simulado
 ```
@@ -67,6 +67,7 @@ Com o `npm run demo` rodando, abra **http://localhost:3000/admin** (usuário qua
    - **VPS com Docker (tudo junto, recomendado):** um servidor com 2 GB de RAM (Hetzner, Contabo, DigitalOcean, Hostinger). Aponte o DNS do seu domínio para ele, preencha no `.env` também `DOMAIN`, `EVOLUTION_API_KEY` (invente uma chave longa) e `POSTGRES_PASSWORD`, e rode `docker compose up -d`. Sobem a Secretária, a Evolution API, o Postgres, o Redis e o HTTPS (Caddy). Os dados ficam em volumes do Docker.
    - **Railway:** crie um projeto com dois serviços: (a) a Evolution API pelo template "Evolution API" do Railway e (b) este repositório (`npm start`) com um **volume montado em `/app/data`** e `DB_FILE=/app/data/secretaria.db`. No serviço da Secretária, preencha `EVOLUTION_API_URL` (URL da Evolution) e `EVOLUTION_API_KEY` (a `AUTHENTICATION_API_KEY` dela) e `BASE_URL` (URL pública da Secretária).
    - ⚠️ **Vercel/Netlify/Cloudflare não servem**: o sistema precisa ficar ligado (agendador a cada minuto) e de disco para o banco.
+   - **Já tem uma Evolution?** Não precisa subir outra: aponte `EVOLUTION_API_URL` para ela. Para não deixar a chave da Evolution no servidor da Secretária, use a ponte no Cloudflare: [`cloudflare/evolution-proxy`](cloudflare/evolution-proxy/README.md).
 4. **Conectar o WhatsApp:** abra `https://SEU-DOMINIO/admin` → **Conectar WhatsApp (QR Code)** → no celular da Secretária: WhatsApp → Aparelhos conectados → Conectar aparelho → leia o QR. O sistema cria a instância e configura o webhook sozinho. Use **Enviar mensagem de teste** para conferir.
 5. **Asaas:** gere a API key. Crie o webhook `https://SEU-DOMINIO/billing/webhook` com um authToken e coloque esse mesmo valor em `ASAAS_WEBHOOK_TOKEN`. Assine os eventos `PAYMENT_CONFIRMED`, `PAYMENT_RECEIVED`, `PAYMENT_OVERDUE`, `SUBSCRIPTION_DELETED` e `SUBSCRIPTION_INACTIVATED`.
 6. Preencha `WHATSAPP_DISPLAY_NUMBER` com o número da Secretária (é o link "Começar no WhatsApp" do site).
@@ -97,6 +98,7 @@ public/               site de vendas, painel do cliente (PWA), admin com simulad
 templates/            7 modelos de mensagem (só se usar a API oficial da Meta)
 docker-compose.yml    servidor completo: Secretária + Evolution + Postgres + Redis + HTTPS
 .devcontainer/        demonstração no GitHub Codespaces
+cloudflare/           ponte segura para a Evolution (guarda a chave no Cloudflare)
 test/                 testes
 ```
 

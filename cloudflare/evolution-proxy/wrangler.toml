@@ -1,0 +1,9 @@
+# Opcional: publicar pelo terminal com `npx wrangler deploy` (dentro desta pasta).
+# Os segredos vão com: npx wrangler secret put EVOLUTION_API_KEY  e  npx wrangler secret put PROXY_TOKEN
+name = "secretaria-evolution-proxy"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+
+[vars]
+EVOLUTION_URL = "https://evoapi.agentenpe.com.br"
+INSTANCE = "secretaria"
