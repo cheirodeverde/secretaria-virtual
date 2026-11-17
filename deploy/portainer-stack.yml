@@ -1,0 +1,55 @@
+# Stack da Secretária para o Portainer (Docker Swarm + Traefik, o mesmo esquema da sua Evolution).
+#
+# Antes de colar: troque os 3 itens marcados com  ⚠️  pelos MESMOS valores da stack da Evolution
+# (abra a stack da Evolution no Portainer → Editor e copie de lá).
+#
+# Variáveis (senhas, Google, Asaas) NÃO vão aqui: cadastre na seção "Environment variables" da stack.
+version: "3.8"
+
+services:
+  secretaria:
+    image: ghcr.io/cheirodeverde/secretaria-virtual:latest
+    environment:
+      - NODE_ENV=production
+      - TIMEZONE=America/Sao_Paulo
+      - DB_FILE=/app/data/secretaria.db
+      - PORT=3000
+      - BASE_URL=${BASE_URL}
+      - APP_SECRET=${APP_SECRET}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - PRODUCT_NAME=${PRODUCT_NAME:-Secretária de Bolso}
+      - TRIAL_DAYS=${TRIAL_DAYS:-14}
+      - PRICE_ESSENCIAL=${PRICE_ESSENCIAL:-49}
+      - PRICE_PROFISSIONAL=${PRICE_PROFISSIONAL:-89}
+      - DEMO_MODE=${DEMO_MODE:-false}
+      - CALENDAR_WRITE=${CALENDAR_WRITE:-true}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - ASAAS_API_KEY=${ASAAS_API_KEY:-}
+      - ASAAS_ENV=${ASAAS_ENV:-sandbox}
+      - ASAAS_WEBHOOK_TOKEN=${ASAAS_WEBHOOK_TOKEN:-}
+      - WHATSAPP_PROVIDER=evolution
+    volumes:
+      - secretaria_data:/app/data          # banco (clientes, tarefas, números): NÃO apague este volume
+    networks:
+      - REDE_DA_EVOLUTION                  # ⚠️ 1. nome da rede da stack da Evolution
+    deploy:
+      mode: replicated
+      replicas: 1                          # sempre 1 (o banco é um arquivo)
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.secretaria.rule=Host(`${DOMINIO}`)
+        - traefik.http.routers.secretaria.entrypoints=websecure        # ⚠️ 2. igual ao "entrypoints" da Evolution
+        - traefik.http.routers.secretaria.tls.certresolver=letsencryptresolver   # ⚠️ 3. igual ao "certresolver" da Evolution
+        - traefik.http.services.secretaria.loadbalancer.server.port=3000
+        - traefik.docker.network=REDE_DA_EVOLUTION                     # ⚠️ 1. mesmo nome da rede
+
+volumes:
+  secretaria_data:
+
+networks:
+  REDE_DA_EVOLUTION:                       # ⚠️ 1. mesmo nome da rede
+    external: true
