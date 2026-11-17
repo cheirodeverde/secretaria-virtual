@@ -11,7 +11,9 @@ const codespaceUrl = process.env.CODESPACE_NAME && process.env.GITHUB_CODESPACES
 
 export const config = {
   port,
-  baseUrl: (process.env.BASE_URL || codespaceUrl || `http://localhost:${port}`).replace(/\/$/, ''),
+  // Railway informa o domínio público sozinho (RAILWAY_PUBLIC_DOMAIN)
+  baseUrl: (process.env.BASE_URL || (process.env.RAILWAY_PUBLIC_DOMAIN && `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`)
+    || codespaceUrl || `http://localhost:${port}`).replace(/\/$/, ''),
   timezone: process.env.TZ,
   dbFile: process.env.DB_FILE || 'data/secretaria.db',
   // Segredo usado para assinar sessões e criptografar tokens do Google. OBRIGATÓRIO em produção.

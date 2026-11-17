@@ -8,7 +8,8 @@ COPY src ./src
 COPY public ./public
 COPY templates ./templates
 COPY scripts ./scripts
-# Banco SQLite: guarde esta pasta em volume (dados dos clientes)
-VOLUME /app/data
+# Banco SQLite em /app/data: monte um volume/disco persistente nesta pasta
+# (Railway: aba Volumes · docker-compose/Portainer: já configurado). Sem volume, os dados somem a cada deploy.
+RUN mkdir -p /app/data
 EXPOSE 3000
 CMD ["node", "--disable-warning=ExperimentalWarning", "src/server.js"]
